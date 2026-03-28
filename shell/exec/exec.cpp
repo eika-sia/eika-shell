@@ -1,5 +1,6 @@
 #include "exec.hpp"
 
+#include <array>
 #include <fcntl.h>
 #include <iostream>
 #include <sys/wait.h>
@@ -65,61 +66,110 @@ bool apply_redirections(const Command &cmd) {
     return true;
 }
 
-void launch_external(ShellState &state, const Command &cmd) {
-    if (cmd.args.size() == 0) {
+void launch_pipeline(ShellState &state, const Pipeline &pipe) {
+    if (pipe.commands.empty()) {
         std::cerr << "how did we get here?\n";
         return;
     }
 
-    // argv bi trebao bit char* cosnt*
-    std::vector<char *> argv = build_argv(cmd.args);
+    const size_t n = pipe.commands.size();
+    std::vector<std::array<int, 2>> fds;
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork");
-        return;
+    if (n > 1) {
+        fds.resize(n - 1);
+        for (size_t i = 0; i < n - 1; ++i) {
+            if (::pipe(fds[i].data()) == -1) {
+                perror("pipe");
+                return;
+            }
+        }
     }
 
-    if (pid == 0) {
-        setpgid(0, 0);
-        if (!apply_redirections(cmd)) {
+    std::vector<pid_t> pids;
+    pid_t pipeline_pgid = -1;
+
+    for (size_t i = 0; i < n; ++i) {
+        const Command &cmd = pipe.commands[i];
+        std::vector<char *> argv = build_argv(cmd.args);
+
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("fork");
+            return;
+        }
+
+        if (pid == 0) {
+            // prva komanda je group leader
+            if (pipeline_pgid == -1) {
+                setpgid(0, 0);
+            } else {
+                setpgid(0, pipeline_pgid);
+            }
+
+            if (i > 0) {
+                if (dup2(fds[i - 1][0], STDIN_FILENO) == -1) {
+                    perror("dup2 stdin");
+                    _exit(1);
+                }
+            }
+
+            if (i + 1 < n) {
+                if (dup2(fds[i][1], STDOUT_FILENO) == -1) {
+                    perror("dup2 stdout");
+                    _exit(1);
+                }
+            }
+
+            for (auto &fdpair : fds) {
+                close(fdpair[0]);
+                close(fdpair[1]);
+            }
+
+            if (!apply_redirections(cmd)) {
+                _exit(1);
+            }
+
+            execvp(argv[0], argv.data());
+            perror("execvp");
             _exit(1);
         }
-        execvp(argv[0], argv.data());
-        perror("execvp");
-        _exit(1);
+
+        if (pipeline_pgid == -1) {
+            pipeline_pgid = pid;
+        }
+
+        if (setpgid(pid, pipeline_pgid) == -1) {
+            perror("setpgid");
+        }
+
+        pids.push_back(pid);
+        add_process(state, pid, cmd);
     }
 
-    if (setpgid(pid, pid) == -1) {
-        perror("setpgid");
+    for (std::array<int, 2> &fdpair : fds) {
+        close(fdpair[0]);
+        close(fdpair[1]);
     }
 
-    add_process(state, pid, cmd);
-
-    if (cmd.background)
+    if (pipe.background) {
         return;
-
-    state.foreground_pgid = pid;
-    g_foreground_pgid = pid;
-
-    give_terminal_to(g_foreground_pgid);
-
-    int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
-        perror("waitpid");
     }
-    mark_process_finished(state, pid);
+
+    state.foreground_pgid = pipeline_pgid;
+    g_foreground_pgid = pipeline_pgid;
+
+    give_terminal_to(pipeline_pgid);
+
+    for (pid_t pid : pids) {
+        int status = 0;
+        if (waitpid(pid, &status, 0) < 0) {
+            perror("waitpid");
+        }
+        mark_process_finished(state, pid);
+    }
 
     reclaim_terminal(state);
 
     state.foreground_pgid = -1;
     g_foreground_pgid = -1;
-}
-
-void launch_pipeline(ShellState &state, const Pipeline pipe) {
-    if (pipe.commands.size() == 1) {
-        launch_external(state, pipe.commands[0]);
-    } else {
-        std::cerr << "sorry not implemented\n";
-    }
 }

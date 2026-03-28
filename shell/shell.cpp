@@ -90,9 +90,6 @@ void execute_pipeline(ShellState &state, std::string line) {
         if (handle_builtin(state, pipe.commands[0])) {
             return;
         }
-
-        launch_external(state, pipe.commands[0]);
-        return;
     }
 
     launch_pipeline(state, pipe);
