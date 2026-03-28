@@ -1,3 +1,0 @@
-/home/eika/faks/fer/2god/os/lab2/build/CMakeFiles/shell.dir
-/home/eika/faks/fer/2god/os/lab2/build/CMakeFiles/edit_cache.dir
-/home/eika/faks/fer/2god/os/lab2/build/CMakeFiles/rebuild_cache.dir
