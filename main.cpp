@@ -1,7 +1,6 @@
 #include <iostream>
 #include <string>
 
-#include "parser/parser.hpp"
 #include "shell/input/input.hpp"
 #include "shell/prompt/prompt.hpp"
 #include "shell/shell.hpp"
@@ -31,14 +30,7 @@ int main() {
             continue;
         }
         state.history.push_back(line);
-
-        for (const std::basic_string<char> &part :
-             split_chained_commands(line)) {
-            execute_pipeline(state, part);
-            if (!state.running) {
-                break;
-            }
-        }
+        execute_command_line(state, line);
     }
 
     return 0;

@@ -28,5 +28,5 @@ void cleanup_finished_processes(ShellState &state);
 void add_process(ShellState &state, pid_t pid, const Command &cmd);
 void mark_process_finished(ShellState &state, pid_t pid);
 
-void execute_pipeline(ShellState &state, std::string line);
+void execute_command_line(ShellState &state, std::string line);
 std::string trim(const std::string &source);

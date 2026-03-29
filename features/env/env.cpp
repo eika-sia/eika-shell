@@ -6,18 +6,38 @@
 
 std::string expand_environment_variables(const std::string &line) {
     std::string out;
+    bool in_single_quote = false;
+    bool in_double_quote = false;
 
     for (size_t i = 0; i < line.size(); ++i) {
         char c = line[i];
 
-        // backslash
+        if (c == '\'' && !in_double_quote) {
+            in_single_quote = !in_single_quote;
+            out.push_back(c);
+            continue;
+        }
+
+        if (c == '"' && !in_single_quote) {
+            in_double_quote = !in_double_quote;
+            out.push_back(c);
+            continue;
+        }
+
+        // Preserve escapes so reparsing keeps the same token boundaries.
         if (c == '\\') {
             if (i + 1 < line.size()) {
+                out.push_back('\\');
                 out.push_back(line[i + 1]);
                 ++i;
             } else {
                 out.push_back('\\');
             }
+            continue;
+        }
+
+        if (in_single_quote) {
+            out.push_back(c);
             continue;
         }
 

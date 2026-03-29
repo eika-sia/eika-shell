@@ -4,20 +4,24 @@
 #include <iostream>
 #include <string>
 
-bool handle_alias_builtin(ShellState &state, const std::string &line) {
-    if (line == "alias") {
+bool handle_alias_builtin(ShellState &state, const Command &cmd) {
+    if (cmd.args.empty() || cmd.args[0] != "alias") {
+        return false;
+    }
+
+    if (cmd.args.size() == 1) {
         for (const auto &[name, value] : state.alias) {
             std::cout << name << "=\"" << value << "\"\n";
         }
         return true;
     }
 
-    if (line.rfind("alias ", 0) != 0) {
-        return false;
+    if (cmd.args.size() != 2) {
+        std::cerr << "alias: invalid format\n";
+        return true;
     }
 
-    // expected format: alias name="value"
-    std::string expr = line.substr(6);
+    std::string expr = cmd.args[1];
 
     size_t eq_pos = expr.find('=');
     if (eq_pos == std::string::npos) {
@@ -40,35 +44,31 @@ bool handle_alias_builtin(ShellState &state, const std::string &line) {
         }
     }
 
-    if (value.size() < 2 || value.front() != '"' || value.back() != '"') {
-        std::cerr << "alias: value must be in double quotes\n";
-        return true;
-    }
-
-    value = value.substr(1, value.size() - 2);
-
     state.alias[name] = value;
     return true;
 }
 
-std::string expand_aliases(const ShellState &state, const std::string &line) {
-    size_t first_space = line.find(' ');
+bool expand_aliases(const ShellState &state, Command &cmd) {
+    for (size_t depth = 0; depth < 16; ++depth) {
+        if (!cmd.valid || cmd.args.empty() ||
+            cmd.command_name_offset == std::string::npos) {
+            return cmd.valid;
+        }
 
-    std::string first_word;
-    std::string rest;
+        if (state.alias.find(cmd.args[0]) == state.alias.end()) {
+            return true;
+        }
 
-    if (first_space == std::string::npos) {
-        first_word = line;
-        rest = "";
-    } else {
-        first_word = line.substr(0, first_space);
-        rest = line.substr(first_space);
+        std::string expanded = cmd.raw;
+        expanded.replace(cmd.command_name_offset, cmd.command_name_length,
+                         state.alias.at(cmd.args[0]));
+
+        cmd = parse_command(expanded);
+        if (!cmd.valid) {
+            return false;
+        }
     }
 
-    auto it = state.alias.find(first_word);
-    if (it == state.alias.end()) {
-        return line;
-    }
-
-    return it->second + rest;
+    std::cerr << "alias: expansion loop detected\n";
+    return false;
 }

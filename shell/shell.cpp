@@ -1,7 +1,6 @@
 #include "shell.hpp"
 
 #include <cstdio>
-#include <limits.h>
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -63,7 +62,7 @@ std::string trim(const std::string &source) {
     return s;
 }
 
-void execute_pipeline(ShellState &state, std::string line) {
+void execute_command_line(ShellState &state, std::string line) {
     line = trim(line);
     if (line.empty()) {
         return;
@@ -73,24 +72,41 @@ void execute_pipeline(ShellState &state, std::string line) {
         return;
     }
 
-    if (handle_alias_builtin(state, line)) {
+    CommandList command_line = parse_command_line(line);
+    if (!command_line.valid) {
         return;
     }
 
-    line = expand_aliases(state, line);
-    line = expand_environment_variables(line);
+    for (Pipeline pipe : command_line.pipelines) {
+        if (pipe.commands.size() == 1 &&
+            handle_alias_builtin(state, pipe.commands[0])) {
+            continue;
+        }
 
-    Pipeline pipe = parse_pipeline(line);
+        for (Command &cmd : pipe.commands) {
+            if (!expand_aliases(state, cmd)) {
+                return;
+            }
 
-    if (!pipe.valid) {
-        return;
-    }
+            cmd = parse_command(expand_environment_variables(cmd.raw));
+            if (!cmd.valid) {
+                return;
+            }
 
-    if (pipe.commands.size() == 1) {
-        if (handle_builtin(state, pipe.commands[0])) {
-            return;
+            cmd.background = pipe.background;
+        }
+
+        if (pipe.commands.size() == 1 &&
+            handle_builtin(state, pipe.commands[0])) {
+            if (!state.running) {
+                break;
+            }
+            continue;
+        }
+
+        launch_pipeline(state, pipe);
+        if (!state.running) {
+            break;
         }
     }
-
-    launch_pipeline(state, pipe);
 }
