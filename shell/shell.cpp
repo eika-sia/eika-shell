@@ -8,7 +8,7 @@
 
 #include "../builtins/builtins.hpp"
 #include "../features/alias/alias.hpp"
-#include "../features/env/env.hpp"
+#include "../features/expansion/expansion.hpp"
 #include "../features/history/history.hpp"
 #include "../parser/parser.hpp"
 #include "./exec/exec.hpp"
@@ -64,13 +64,11 @@ std::string trim(const std::string &source) {
 
 void execute_command_line(ShellState &state, std::string line) {
     line = trim(line);
-    if (line.empty()) {
+    if (line.empty())
         return;
-    }
 
-    if (!expand_history(state, line)) {
+    if (!expand_history(state, line))
         return;
-    }
 
     CommandList command_line = parse_command_line(line);
     if (!command_line.valid) {
@@ -78,18 +76,9 @@ void execute_command_line(ShellState &state, std::string line) {
     }
 
     for (Pipeline pipe : command_line.pipelines) {
-        if (pipe.commands.size() == 1 &&
-            handle_alias_builtin(state, pipe.commands[0])) {
-            continue;
-        }
 
         for (Command &cmd : pipe.commands) {
-            if (!expand_aliases(state, cmd)) {
-                return;
-            }
-
-            cmd = parse_command(expand_environment_variables(cmd.raw));
-            if (!cmd.valid) {
+            if (!expand_command(state, cmd)) {
                 return;
             }
 
@@ -97,7 +86,8 @@ void execute_command_line(ShellState &state, std::string line) {
         }
 
         if (pipe.commands.size() == 1 &&
-            handle_builtin(state, pipe.commands[0])) {
+            (handle_builtin(state, pipe.commands[0]) ||
+             handle_alias_builtin(state, pipe.commands[0]))) {
             if (!state.running) {
                 break;
             }
