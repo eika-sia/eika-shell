@@ -41,19 +41,29 @@ void add_process(shell::ShellState &state, pid_t pid, pid_t pgid,
     state.processes.push_back(new_proc);
 }
 
-void mark_process_finished(shell::ShellState &state, pid_t pid) {
+void mark_process_finished(shell::ShellState &state, pid_t pid,
+                           int raw_wait_status) {
     if (ProcessInfo *proc = find_process(state, pid)) {
         proc->running = false;
+        proc->raw_wait_status = raw_wait_status;
+        proc->has_wait_status = true;
     }
 }
 
-bool reap_process(shell::ShellState &state, pid_t pid, int options) {
+bool process_reaper(shell::ShellState &state, pid_t pid, int options,
+                    int *raw_wait_status, pid_t *reaped_pid) {
     int status = 0;
 
     while (true) {
         pid_t waited = waitpid(pid, &status, options);
         if (waited > 0) {
-            mark_process_finished(state, waited);
+            mark_process_finished(state, waited, status);
+            if (raw_wait_status) {
+                *raw_wait_status = status;
+            }
+            if (reaped_pid) {
+                *reaped_pid = waited;
+            }
             return true;
         }
 
@@ -73,15 +83,42 @@ bool reap_process(shell::ShellState &state, pid_t pid, int options) {
 }
 
 void cleanup_finished_processes(shell::ShellState &state) {
-    while (reap_process(state, -1, WNOHANG)) {
+    while (process_reaper(state, -1, WNOHANG)) {
     }
 }
 
-void wait_for_processes(shell::ShellState &state,
-                        const std::vector<pid_t> &pids) {
-    for (pid_t pid : pids) {
-        reap_process(state, pid, 0);
+int shell_status_from_wait_status(int raw_wait_status) {
+    if (WIFEXITED(raw_wait_status)) {
+        return WEXITSTATUS(raw_wait_status);
     }
+
+    if (WIFSIGNALED(raw_wait_status)) {
+        return 128 + WTERMSIG(raw_wait_status);
+    }
+
+    return 1;
+}
+
+int wait_for_processes(shell::ShellState &state,
+                       const std::vector<pid_t> &pids) {
+    int last_status = 0;
+
+    for (pid_t pid : pids) {
+        int raw_wait_status = 0;
+        if (process_reaper(state, pid, 0, &raw_wait_status)) {
+            last_status = shell_status_from_wait_status(raw_wait_status);
+            continue;
+        }
+
+        const ProcessInfo *proc = find_process(state, pid);
+        if (proc && proc->has_wait_status) {
+            last_status = shell_status_from_wait_status(proc->raw_wait_status);
+        } else {
+            last_status = 1;
+        }
+    }
+
+    return last_status;
 }
 
 } // namespace process

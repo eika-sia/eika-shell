@@ -6,7 +6,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "../parser/parser.hpp"
 #include "../process/process.hpp"
 
 namespace shell {
@@ -20,6 +19,7 @@ struct ShellState {
 
     termios shell_term_settings{};
     bool running = true;
+    int last_status = 0;
 
     std::unordered_map<std::string, std::string> alias;
 };

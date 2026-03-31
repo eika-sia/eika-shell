@@ -4,9 +4,12 @@
 #include <cstdlib>
 #include <string>
 
+#include "../../shell/shell.hpp"
+
 namespace features {
 
-std::string expand_environment_variables(const std::string &line) {
+std::string expand_environment_variables(const shell::ShellState &state,
+                                         const std::string &line) {
     std::string out;
     bool in_single_quote = false;
     bool in_double_quote = false;
@@ -55,6 +58,12 @@ std::string expand_environment_variables(const std::string &line) {
         }
 
         size_t j = i + 1;
+
+        if (line[j] == '?') {
+            out += std::to_string(state.last_status);
+            i = j;
+            continue;
+        }
 
         if (!(std::isalpha(static_cast<unsigned char>(line[j])) ||
               line[j] == '_')) {

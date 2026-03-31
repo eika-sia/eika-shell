@@ -7,6 +7,12 @@
 
 namespace parser {
 
+enum class RunCondition {
+    Always,
+    IfPreviousSucceeded,
+    IfPreviousFailed,
+};
+
 struct Command {
     std::string raw;
     std::vector<std::string> args;
@@ -24,12 +30,20 @@ struct Command {
 struct Pipeline {
     std::vector<Command> commands;
     bool background = false;
+    RunCondition run_condition = RunCondition::Always;
+
+    bool valid = true;
+};
+
+struct ConditionalPipeline {
+    std::vector<Pipeline> pipelines;
+    bool background = false;
 
     bool valid = true;
 };
 
 struct CommandList {
-    std::vector<Pipeline> pipelines;
+    std::vector<ConditionalPipeline> and_or_pipelines;
     bool valid = true;
 };
 

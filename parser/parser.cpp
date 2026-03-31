@@ -15,6 +15,8 @@ enum class TokenKind {
     OutputRedirect,
     AppendRedirect,
     Pipe,
+    AndIf,
+    OrIf,
     Sequence,
     Background,
 };
@@ -107,7 +109,12 @@ bool tokenize_line(const std::string &line, std::vector<Token> &tokens) {
             }
 
             if (c == '|') {
-                tokens.push_back(Token{TokenKind::Pipe, "|", i, i + 1});
+                if (i + 1 < line.size() && line[i + 1] == '|') {
+                    tokens.push_back(Token{TokenKind::OrIf, "||", i, i + 2});
+                    ++i;
+                } else {
+                    tokens.push_back(Token{TokenKind::Pipe, "|", i, i + 1});
+                }
                 continue;
             }
 
@@ -117,7 +124,13 @@ bool tokenize_line(const std::string &line, std::vector<Token> &tokens) {
             }
 
             if (c == '&') {
-                tokens.push_back(Token{TokenKind::Background, "&", i, i + 1});
+                if (i + 1 < line.size() && line[i + 1] == '&') {
+                    tokens.push_back(Token{TokenKind::AndIf, "&&", i, i + 2});
+                    ++i;
+                } else {
+                    tokens.push_back(
+                        Token{TokenKind::Background, "&", i, i + 1});
+                }
                 continue;
             }
 
@@ -268,6 +281,61 @@ bool parse_pipeline_tokens(const std::vector<Token> &tokens,
     return true;
 }
 
+bool parse_and_or_tokens(const std::vector<Token> &tokens,
+                         const std::string &source,
+                         ConditionalPipeline &and_or) {
+    and_or = ConditionalPipeline{};
+    and_or.valid = false;
+
+    if (tokens.empty()) {
+        std::cerr << "syntax error: missing command\n";
+        return false;
+    }
+
+    std::vector<Token> current_pipeline_tokens;
+    RunCondition next_condition = RunCondition::Always;
+
+    for (const Token &token : tokens) {
+        if (token.kind != TokenKind::AndIf && token.kind != TokenKind::OrIf) {
+            current_pipeline_tokens.push_back(token);
+            continue;
+        }
+
+        if (current_pipeline_tokens.empty()) {
+            std::cerr << "syntax error: missing command before " << token.text
+                      << "\n";
+            return false;
+        }
+
+        Pipeline pipe{};
+        if (!parse_pipeline_tokens(current_pipeline_tokens, source, pipe)) {
+            return false;
+        }
+
+        pipe.run_condition = next_condition;
+        and_or.pipelines.push_back(pipe);
+        current_pipeline_tokens.clear();
+        next_condition = (token.kind == TokenKind::AndIf)
+                             ? RunCondition::IfPreviousSucceeded
+                             : RunCondition::IfPreviousFailed;
+    }
+
+    if (current_pipeline_tokens.empty()) {
+        std::cerr << "syntax error: missing command\n";
+        return false;
+    }
+
+    Pipeline pipe{};
+    if (!parse_pipeline_tokens(current_pipeline_tokens, source, pipe)) {
+        return false;
+    }
+
+    pipe.run_condition = next_condition;
+    and_or.pipelines.push_back(pipe);
+    and_or.valid = true;
+    return true;
+}
+
 } // namespace
 
 Command parse_command(const std::string &line) {
@@ -289,7 +357,8 @@ Command parse_command(const std::string &line) {
     }
 
     for (const Token &token : tokens) {
-        if (token.kind == TokenKind::Pipe ||
+        if (token.kind == TokenKind::Pipe || token.kind == TokenKind::AndIf ||
+            token.kind == TokenKind::OrIf ||
             token.kind == TokenKind::Sequence ||
             token.kind == TokenKind::Background) {
             std::cerr << "syntax error: unexpected token " << token.text
@@ -332,7 +401,8 @@ Pipeline parse_pipeline(const std::string &line) {
 
     for (const Token &token : tokens) {
         if (token.kind == TokenKind::Sequence ||
-            token.kind == TokenKind::Background) {
+            token.kind == TokenKind::Background ||
+            token.kind == TokenKind::AndIf || token.kind == TokenKind::OrIf) {
             std::cerr << "syntax error: unexpected token " << token.text
                       << "\n";
             return pipe;
@@ -368,17 +438,17 @@ CommandList parse_command_line(const std::string &line) {
         return list;
     }
 
-    std::vector<Token> current_pipeline_tokens;
+    std::vector<Token> current_and_or_tokens;
     for (size_t i = 0; i < tokens.size(); ++i) {
         const Token &token = tokens[i];
 
         if (token.kind != TokenKind::Sequence &&
             token.kind != TokenKind::Background) {
-            current_pipeline_tokens.push_back(token);
+            current_and_or_tokens.push_back(token);
             continue;
         }
 
-        if (current_pipeline_tokens.empty()) {
+        if (current_and_or_tokens.empty()) {
             if (token.kind == TokenKind::Sequence && i == tokens.size() - 1) {
                 list.valid = true;
                 return list;
@@ -389,21 +459,24 @@ CommandList parse_command_line(const std::string &line) {
             return list;
         }
 
-        Pipeline pipe{};
-        if (!parse_pipeline_tokens(current_pipeline_tokens, work, pipe)) {
+        ConditionalPipeline and_or{};
+        if (!parse_and_or_tokens(current_and_or_tokens, work, and_or)) {
             return list;
         }
 
-        pipe.background = (token.kind == TokenKind::Background);
-        for (Command &cmd : pipe.commands) {
-            cmd.background = pipe.background;
+        and_or.background = (token.kind == TokenKind::Background);
+        for (Pipeline &pipe : and_or.pipelines) {
+            pipe.background = and_or.background;
+            for (Command &cmd : pipe.commands) {
+                cmd.background = pipe.background;
+            }
         }
 
-        list.pipelines.push_back(pipe);
-        current_pipeline_tokens.clear();
+        list.and_or_pipelines.push_back(and_or);
+        current_and_or_tokens.clear();
     }
 
-    if (current_pipeline_tokens.empty()) {
+    if (current_and_or_tokens.empty()) {
         if (!tokens.empty() && tokens.back().kind == TokenKind::Sequence) {
             list.valid = true;
             return list;
@@ -418,12 +491,12 @@ CommandList parse_command_line(const std::string &line) {
         return list;
     }
 
-    Pipeline pipe{};
-    if (!parse_pipeline_tokens(current_pipeline_tokens, work, pipe)) {
+    ConditionalPipeline and_or{};
+    if (!parse_and_or_tokens(current_and_or_tokens, work, and_or)) {
         return list;
     }
 
-    list.pipelines.push_back(pipe);
+    list.and_or_pipelines.push_back(and_or);
     list.valid = true;
     return list;
 }

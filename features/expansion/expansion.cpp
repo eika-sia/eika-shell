@@ -94,7 +94,9 @@ bool expand_command(shell::ShellState &state, parser::Command &cmd) {
         return false;
     }
 
-    if (!reparse_command(cmd, features::expand_environment_variables(cmd.raw))) {
+    if (!reparse_command(cmd,
+                         features::expand_environment_variables(state,
+                                                               cmd.raw))) {
         return false;
     }
 

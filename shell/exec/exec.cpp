@@ -88,10 +88,10 @@ void close_pipe_fds(std::vector<std::array<int, 2>> &fds) {
     }
 }
 
-void cleanup_failed_pipeline_launch(ShellState &state,
-                                    std::vector<std::array<int, 2>> &fds,
-                                    const std::vector<pid_t> &pids,
-                                    pid_t pipeline_pgid) {
+int cleanup_failed_pipeline_launch(ShellState &state,
+                                   std::vector<std::array<int, 2>> &fds,
+                                   const std::vector<pid_t> &pids,
+                                   pid_t pipeline_pgid) {
     close_pipe_fds(fds);
 
     if (pipeline_pgid > 0) {
@@ -99,12 +99,13 @@ void cleanup_failed_pipeline_launch(ShellState &state,
     }
 
     process::wait_for_processes(state, pids);
+    return 1;
 }
 
-void launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
+int launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
     if (pipe.commands.empty()) {
         std::cerr << "how did we get here?\n";
-        return;
+        return 1;
     }
 
     const size_t n = pipe.commands.size();
@@ -116,7 +117,7 @@ void launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
             if (::pipe(fds[i].data()) == -1) {
                 perror("pipe");
                 close_pipe_fds(fds);
-                return;
+                return 1;
             }
         }
     }
@@ -130,8 +131,8 @@ void launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
         pid_t pid = fork();
         if (pid < 0) {
             perror("fork");
-            cleanup_failed_pipeline_launch(state, fds, pids, pipeline_pgid);
-            return;
+            return cleanup_failed_pipeline_launch(state, fds, pids,
+                                                  pipeline_pgid);
         }
 
         if (pid == 0) {
@@ -216,7 +217,7 @@ void launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
     close_pipe_fds(fds);
 
     if (pipe.background) {
-        return;
+        return 0;
     }
 
     state.foreground_pgid = pipeline_pgid;
@@ -224,12 +225,13 @@ void launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
 
     terminal::give_terminal_to(pipeline_pgid);
 
-    process::wait_for_processes(state, pids);
+    const int status = process::wait_for_processes(state, pids);
 
     terminal::reclaim_terminal(state);
 
     state.foreground_pgid = -1;
     signals::g_foreground_pgid = -1;
+    return status;
 }
 
 bool save_stdio(SavedStdio &saved) {
@@ -270,8 +272,8 @@ void restore_stdio(const SavedStdio &saved) {
 
 } // namespace
 
-void launch_pipeline(ShellState &state, const parser::Pipeline &pipe) {
-    launch_pipeline_impl(state, pipe);
+int launch_pipeline(ShellState &state, const parser::Pipeline &pipe) {
+    return launch_pipeline_impl(state, pipe);
 }
 
 int run_parent_builtin_with_redirections(ShellState &state,

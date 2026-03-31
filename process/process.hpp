@@ -18,6 +18,8 @@ struct ProcessInfo {
     std::string command;
     bool running = false;
     bool background = false;
+    int raw_wait_status = 0;
+    bool has_wait_status = false;
 };
 
 ProcessInfo *find_process(shell::ShellState &state, pid_t pid);
@@ -25,11 +27,15 @@ const ProcessInfo *find_process(const shell::ShellState &state, pid_t pid);
 
 void add_process(shell::ShellState &state, pid_t pid, pid_t pgid,
                  const parser::Command &cmd);
-void mark_process_finished(shell::ShellState &state, pid_t pid);
+void mark_process_finished(shell::ShellState &state, pid_t pid,
+                           int raw_wait_status);
 
-bool reap_process(shell::ShellState &state, pid_t pid, int options);
+bool process_reaper(shell::ShellState &state, pid_t pid, int options,
+                    int *raw_wait_status = nullptr,
+                    pid_t *reaped_pid = nullptr);
 void cleanup_finished_processes(shell::ShellState &state);
-void wait_for_processes(shell::ShellState &state,
-                        const std::vector<pid_t> &pids);
+int shell_status_from_wait_status(int raw_wait_status);
+int wait_for_processes(shell::ShellState &state,
+                       const std::vector<pid_t> &pids);
 
 } // namespace process
