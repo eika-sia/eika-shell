@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "../../builtins/builtins.hpp"
 #include "../signals/signals.hpp"
 #include "../terminal/terminal.hpp"
 
@@ -90,7 +91,6 @@ void launch_pipeline(ShellState &state, const Pipeline &pipe) {
 
     for (size_t i = 0; i < n; ++i) {
         const Command &cmd = pipe.commands[i];
-        std::vector<char *> argv = build_argv(cmd.args);
 
         pid_t pid = fork();
         if (pid < 0) {
@@ -129,6 +129,35 @@ void launch_pipeline(ShellState &state, const Pipeline &pipe) {
                 _exit(1);
             }
 
+            // builtin pipelining
+            ExecContext ctx =
+                (n > 1) ? ExecContext::PipelineStage
+                        : (pipe.background ? ExecContext::BackgroundStandalone
+                                           : ExecContext::ForegroundStandalone);
+            BuiltinPlan plan = plan_builtin(cmd, ctx);
+
+            if (plan.decision == BuiltinDecision::RunInChild) {
+                int status = run_builtin(state, cmd, plan.kind);
+                std::cout.flush();
+                std::cerr.flush();
+                _exit(status < 0 ? 1 : status);
+            }
+
+            if (plan.decision == BuiltinDecision::Reject) {
+                std::cerr << cmd.args[0] << ": cannot run in this context\n";
+                std::cerr.flush();
+                _exit(2);
+            }
+
+            if (plan.decision == BuiltinDecision::RunInParent) {
+                std::cerr
+                    << "internal error: parent-only builtin reached child\n";
+                std::cerr.flush();
+                _exit(2);
+            }
+
+            // regular child exec
+            std::vector<char *> argv = build_argv(cmd.args);
             execvp(argv[0], argv.data());
             perror("execvp");
             _exit(1);

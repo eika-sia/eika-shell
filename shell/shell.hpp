@@ -7,7 +7,14 @@
 #include <vector>
 
 #include "../parser/parser.hpp"
-#include "../process/process.hpp"
+
+struct ProcessInfo {
+    pid_t pid = -1;
+    pid_t pgid = -1;
+    std::string command;
+    bool running = false;
+    bool background = false;
+};
 
 struct ShellState {
     std::vector<std::string> history;

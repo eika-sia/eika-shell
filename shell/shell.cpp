@@ -1,13 +1,13 @@
 #include "shell.hpp"
 
 #include <cstdio>
+#include <iostream>
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
 
 #include "../builtins/builtins.hpp"
-#include "../features/alias/alias.hpp"
 #include "../features/expansion/expansion.hpp"
 #include "../features/history/history.hpp"
 #include "../parser/parser.hpp"
@@ -85,13 +85,29 @@ void execute_command_line(ShellState &state, std::string line) {
             cmd.background = pipe.background;
         }
 
-        if (pipe.commands.size() == 1 &&
-            (handle_builtin(state, pipe.commands[0]) ||
-             handle_alias_builtin(state, pipe.commands[0]))) {
-            if (!state.running) {
-                break;
+        if (pipe.commands.size() == 1) {
+
+            const Command &cmd = pipe.commands[0];
+            const ExecContext ctx = pipe.background
+                                        ? ExecContext::BackgroundStandalone
+                                        : ExecContext::ForegroundStandalone;
+
+            const BuiltinKind kind = classify_builtin(cmd);
+            const BuiltinDecision decision = decide_builtin(cmd, ctx);
+
+            if (decision == BuiltinDecision::RunInParent) {
+                run_builtin(state, cmd, kind);
+
+                if (!state.running) {
+                    break;
+                }
+                continue;
             }
-            continue;
+
+            if (decision == BuiltinDecision::Reject) {
+                std::cerr << cmd.args[0] << ": cannot run in this context\n";
+                continue;
+            }
         }
 
         launch_pipeline(state, pipe);

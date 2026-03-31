@@ -29,8 +29,8 @@ int main() {
         if (line.empty()) {
             continue;
         }
-        state.history.push_back(line);
         execute_command_line(state, line);
+        state.history.push_back(line);
     }
 
     return 0;
