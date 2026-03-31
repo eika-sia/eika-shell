@@ -9,6 +9,9 @@
 #include <unistd.h>
 #include <vector>
 
+namespace features {
+namespace {
+
 std::string expand_tilde_prefix(const std::string &token) {
     if (token.empty() || token[0] != '~') {
         return token;
@@ -79,6 +82,8 @@ bool is_directory(const std::string &path) {
 
     return S_ISDIR(s.st_mode);
 }
+
+} // namespace
 
 bool looks_like_path_token(const std::string &token) {
     if (token.empty()) {
@@ -174,3 +179,5 @@ std::vector<std::string> complete_command_token(const std::string &token) {
     return std::vector<std::string>(unique_matches.begin(),
                                     unique_matches.end());
 }
+
+} // namespace features

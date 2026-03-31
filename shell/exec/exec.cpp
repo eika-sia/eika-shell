@@ -3,12 +3,20 @@
 #include <array>
 #include <fcntl.h>
 #include <iostream>
-#include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include "../../builtins/builtins.hpp"
 #include "../signals/signals.hpp"
 #include "../terminal/terminal.hpp"
+
+namespace shell::exec {
+namespace {
+
+struct SavedStdio {
+    int stdin_fd = -1;
+    int stdout_fd = -1;
+};
 
 std::vector<char *> build_argv(const std::vector<std::string> &args) {
     std::vector<char *> argv;
@@ -22,7 +30,7 @@ std::vector<char *> build_argv(const std::vector<std::string> &args) {
     return argv;
 }
 
-bool apply_redirections(const Command &cmd) {
+bool apply_redirections(const parser::Command &cmd) {
     if (!cmd.input_file.empty()) {
         int fd = open(cmd.input_file.c_str(), O_RDONLY);
         if (fd == -1) {
@@ -67,7 +75,33 @@ bool apply_redirections(const Command &cmd) {
     return true;
 }
 
-void launch_pipeline(ShellState &state, const Pipeline &pipe) {
+void close_pipe_fds(std::vector<std::array<int, 2>> &fds) {
+    for (std::array<int, 2> &fdpair : fds) {
+        if (fdpair[0] != -1) {
+            close(fdpair[0]);
+            fdpair[0] = -1;
+        }
+        if (fdpair[1] != -1) {
+            close(fdpair[1]);
+            fdpair[1] = -1;
+        }
+    }
+}
+
+void cleanup_failed_pipeline_launch(ShellState &state,
+                                    std::vector<std::array<int, 2>> &fds,
+                                    const std::vector<pid_t> &pids,
+                                    pid_t pipeline_pgid) {
+    close_pipe_fds(fds);
+
+    if (pipeline_pgid > 0) {
+        kill(-pipeline_pgid, SIGTERM);
+    }
+
+    process::wait_for_processes(state, pids);
+}
+
+void launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
     if (pipe.commands.empty()) {
         std::cerr << "how did we get here?\n";
         return;
@@ -77,10 +111,11 @@ void launch_pipeline(ShellState &state, const Pipeline &pipe) {
     std::vector<std::array<int, 2>> fds;
 
     if (n > 1) {
-        fds.resize(n - 1);
+        fds.assign(n - 1, std::array<int, 2>{-1, -1});
         for (size_t i = 0; i < n - 1; ++i) {
             if (::pipe(fds[i].data()) == -1) {
                 perror("pipe");
+                close_pipe_fds(fds);
                 return;
             }
         }
@@ -90,11 +125,12 @@ void launch_pipeline(ShellState &state, const Pipeline &pipe) {
     pid_t pipeline_pgid = -1;
 
     for (size_t i = 0; i < n; ++i) {
-        const Command &cmd = pipe.commands[i];
+        const parser::Command &cmd = pipe.commands[i];
 
         pid_t pid = fork();
         if (pid < 0) {
             perror("fork");
+            cleanup_failed_pipeline_launch(state, fds, pids, pipeline_pgid);
             return;
         }
 
@@ -130,26 +166,28 @@ void launch_pipeline(ShellState &state, const Pipeline &pipe) {
             }
 
             // builtin pipelining
-            ExecContext ctx =
-                (n > 1) ? ExecContext::PipelineStage
-                        : (pipe.background ? ExecContext::BackgroundStandalone
-                                           : ExecContext::ForegroundStandalone);
-            BuiltinPlan plan = plan_builtin(cmd, ctx);
+            builtins::ExecContext ctx =
+                (n > 1)
+                    ? builtins::ExecContext::PipelineStage
+                    : (pipe.background
+                           ? builtins::ExecContext::BackgroundStandalone
+                           : builtins::ExecContext::ForegroundStandalone);
+            builtins::BuiltinPlan plan = builtins::plan_builtin(cmd, ctx);
 
-            if (plan.decision == BuiltinDecision::RunInChild) {
-                int status = run_builtin(state, cmd, plan.kind);
+            if (plan.decision == builtins::BuiltinDecision::RunInChild) {
+                int status = builtins::run_builtin(state, cmd, plan.kind);
                 std::cout.flush();
                 std::cerr.flush();
                 _exit(status < 0 ? 1 : status);
             }
 
-            if (plan.decision == BuiltinDecision::Reject) {
+            if (plan.decision == builtins::BuiltinDecision::Reject) {
                 std::cerr << cmd.args[0] << ": cannot run in this context\n";
                 std::cerr.flush();
                 _exit(2);
             }
 
-            if (plan.decision == BuiltinDecision::RunInParent) {
+            if (plan.decision == builtins::BuiltinDecision::RunInParent) {
                 std::cerr
                     << "internal error: parent-only builtin reached child\n";
                 std::cerr.flush();
@@ -172,35 +210,26 @@ void launch_pipeline(ShellState &state, const Pipeline &pipe) {
         }
 
         pids.push_back(pid);
-        add_process(state, pid, cmd);
+        process::add_process(state, pid, pipeline_pgid, cmd);
     }
 
-    for (std::array<int, 2> &fdpair : fds) {
-        close(fdpair[0]);
-        close(fdpair[1]);
-    }
+    close_pipe_fds(fds);
 
     if (pipe.background) {
         return;
     }
 
     state.foreground_pgid = pipeline_pgid;
-    g_foreground_pgid = pipeline_pgid;
+    signals::g_foreground_pgid = pipeline_pgid;
 
-    give_terminal_to(pipeline_pgid);
+    terminal::give_terminal_to(pipeline_pgid);
 
-    for (pid_t pid : pids) {
-        int status = 0;
-        if (waitpid(pid, &status, 0) < 0) {
-            perror("waitpid");
-        }
-        mark_process_finished(state, pid);
-    }
+    process::wait_for_processes(state, pids);
 
-    reclaim_terminal(state);
+    terminal::reclaim_terminal(state);
 
     state.foreground_pgid = -1;
-    g_foreground_pgid = -1;
+    signals::g_foreground_pgid = -1;
 }
 
 bool save_stdio(SavedStdio &saved) {
@@ -239,8 +268,15 @@ void restore_stdio(const SavedStdio &saved) {
     }
 }
 
-int run_parent_builtin_with_redirections(ShellState &state, const Command &cmd,
-                                         BuiltinKind kind) {
+} // namespace
+
+void launch_pipeline(ShellState &state, const parser::Pipeline &pipe) {
+    launch_pipeline_impl(state, pipe);
+}
+
+int run_parent_builtin_with_redirections(ShellState &state,
+                                         const parser::Command &cmd,
+                                         const builtins::BuiltinPlan &plan) {
     SavedStdio saved{};
     if (!save_stdio(saved)) {
         return 1;
@@ -254,7 +290,7 @@ int run_parent_builtin_with_redirections(ShellState &state, const Command &cmd,
         return 1;
     }
 
-    int status = run_builtin(state, cmd, kind);
+    int status = builtins::run_builtin(state, cmd, plan.kind);
 
     std::cout.flush();
     std::cerr.flush();
@@ -263,3 +299,5 @@ int run_parent_builtin_with_redirections(ShellState &state, const Command &cmd,
 
     return status;
 }
+
+} // namespace shell::exec

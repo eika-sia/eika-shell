@@ -5,6 +5,8 @@
 #include <termios.h>
 #include <unistd.h>
 
+namespace shell::terminal {
+
 void init_terminal(ShellState &state) {
     if (tcgetattr(STDIN_FILENO, &state.shell_term_settings) == -1) {
         perror("tcgetattr");
@@ -35,3 +37,5 @@ void reclaim_terminal(const ShellState &state) {
         perror("tcsetattr");
     }
 }
+
+} // namespace shell::terminal

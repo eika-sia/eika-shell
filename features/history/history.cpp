@@ -2,13 +2,15 @@
 
 #include <iostream>
 
-bool expand_history(ShellState &state, std::string &line) {
+namespace features {
+
+bool expand_history(shell::ShellState &state, std::string &line) {
     if (line[0] == '!') {
         int num = 0;
         try {
             num = std::stoi(line.substr(1));
         } catch (const std::invalid_argument &e) {
-            std::cerr << "history: invalid argumnet" << std::endl;
+            std::cerr << "history: invalid argument" << std::endl;
             return false;
         } catch (const std::out_of_range &e) {
             std::cerr << "history: number out of range" << std::endl;
@@ -24,3 +26,5 @@ bool expand_history(ShellState &state, std::string &line) {
     }
     return true;
 }
+
+} // namespace features

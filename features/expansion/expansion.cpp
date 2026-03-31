@@ -4,7 +4,11 @@
 #include <string>
 
 #include "../../builtins/alias/alias.hpp"
+#include "../../shell/shell.hpp"
 #include "../env/env.hpp"
+
+namespace features {
+namespace {
 
 bool is_word_separator(char c) {
     return c == ' ' || c == '\t' || c == '|' || c == ';' || c == '&' ||
@@ -78,15 +82,23 @@ std::string expand_tilde(const std::string &line) {
     return expanded;
 }
 
-bool expand_command(ShellState &state, Command &cmd) {
-    if (!expand_aliases(state, cmd))
-        return false;
-
-    cmd = parse_command(cmd.raw);
-
-    cmd = parse_command(expand_environment_variables(cmd.raw));
-
-    cmd = parse_command(expand_tilde(cmd.raw));
-
+bool reparse_command(parser::Command &cmd, std::string expanded) {
+    cmd = parser::parse_command(expanded);
     return cmd.valid;
 }
+
+} // namespace
+
+bool expand_command(shell::ShellState &state, parser::Command &cmd) {
+    if (!builtins::expand_aliases(state, cmd)) {
+        return false;
+    }
+
+    if (!reparse_command(cmd, features::expand_environment_variables(cmd.raw))) {
+        return false;
+    }
+
+    return reparse_command(cmd, expand_tilde(cmd.raw));
+}
+
+} // namespace features

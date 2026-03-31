@@ -9,14 +9,17 @@
 
 #include "./alias/alias.hpp"
 
-int run_exit(ShellState &state, const Command &cmd) {
+namespace builtins {
+namespace {
+
+int run_exit(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() != 1) {
         std::cerr << "exit: unexpected arguments\n";
         return 1;
     }
 
     int status = 0;
-    for (const ProcessInfo &proc : state.processes) {
+    for (const process::ProcessInfo &proc : state.processes) {
         if (proc.running && kill(proc.pid, SIGKILL) == -1) {
             perror("kill");
             status = 1;
@@ -27,7 +30,7 @@ int run_exit(ShellState &state, const Command &cmd) {
     return status;
 }
 
-int run_cd(const Command &cmd) {
+int run_cd(const parser::Command &cmd) {
     if (cmd.args.size() == 1) {
         if (getenv("HOME")) {
             if (chdir(getenv("HOME")) == 0) {
@@ -44,16 +47,16 @@ int run_cd(const Command &cmd) {
         std::cerr << "cd: too many arguments\n";
         return 1;
     }
-    int res = chdir(cmd.args[1].c_str());
 
-    if (!res)
+    if (chdir(cmd.args[1].c_str()) == 0) {
         return 0;
+    }
 
     perror("cd");
     return 1;
 }
 
-int run_history(ShellState &state, const Command &cmd) {
+int run_history(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() != 1) {
         std::cerr << "history: unexpected arguments\n";
         return 1;
@@ -65,22 +68,23 @@ int run_history(ShellState &state, const Command &cmd) {
     return 0;
 }
 
-int run_ps(ShellState &state, const Command &cmd) {
+int run_ps(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() != 1) {
         std::cerr << "ps: unexpected arguments\n";
         return 1;
     }
 
     std::cout << "PID   Name\n";
-    for (const ProcessInfo &proc : state.processes) {
-        if (proc.running)
+    for (const process::ProcessInfo &proc : state.processes) {
+        if (proc.running) {
             std::cout << proc.pid << " " << proc.command << std::endl;
+        }
     }
 
     return 0;
 }
 
-int run_kill(ShellState &state, const Command &cmd) {
+int run_kill(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() != 3) {
         std::cerr << "kill: unexpected arguments\n";
         return 1;
@@ -91,28 +95,21 @@ int run_kill(ShellState &state, const Command &cmd) {
     try {
         signal = std::stoi(cmd.args[2]);
         pid = std::stoi(cmd.args[1]);
-    } catch (const std::invalid_argument &e) {
+    } catch (const std::invalid_argument &) {
         std::cerr << "kill: invalid argument" << std::endl;
         return 1;
-    } catch (const std::out_of_range &e) {
+    } catch (const std::out_of_range &) {
         std::cerr << "kill: number out of range" << std::endl;
         return 1;
     }
 
-    bool found = false;
-    bool running = false;
-    for (const ProcessInfo &proc : state.processes) {
-        if (proc.pid == pid) {
-            found = true;
-            running = proc.running;
-        }
-    }
-
-    if (!found) {
+    const process::ProcessInfo *proc = process::find_process(state, pid);
+    if (!proc) {
         std::cerr << "kill: process with PID " << pid << " not found\n";
         return 1;
     }
-    if (!running) {
+
+    if (!proc->running) {
         std::cerr << "kill: process with PID " << pid << " not running\n";
         return 1;
     }
@@ -122,11 +119,10 @@ int run_kill(ShellState &state, const Command &cmd) {
         return 1;
     }
 
-    cleanup_finished_processes(state);
     return 0;
 }
 
-BuiltinKind classify_builtin(const Command &cmd) {
+BuiltinKind classify_builtin(const parser::Command &cmd) {
     if (cmd.args.empty()) {
         return BuiltinKind::None;
     }
@@ -148,18 +144,14 @@ BuiltinKind classify_builtin(const Command &cmd) {
         return BuiltinKind::Kill;
     }
     if (first == "alias") {
-        if (cmd.args.size() == 1) {
-            return BuiltinKind::AliasList;
-        } else {
-            return BuiltinKind::AliasSet;
-        }
+        return (cmd.args.size() == 1) ? BuiltinKind::AliasList
+                                      : BuiltinKind::AliasSet;
     }
 
     return BuiltinKind::None;
 }
 
-BuiltinDecision decide_builtin(const Command &cmd, ExecContext ctx) {
-    const BuiltinKind kind = classify_builtin(cmd);
+BuiltinDecision decide_builtin(BuiltinKind kind, ExecContext ctx) {
     if (kind == BuiltinKind::None) {
         return BuiltinDecision::External;
     }
@@ -176,16 +168,15 @@ BuiltinDecision decide_builtin(const Command &cmd, ExecContext ctx) {
     return BuiltinDecision::Reject;
 }
 
-BuiltinPlan plan_builtin(const Command &cmd, ExecContext ctx) {
-    BuiltinPlan plan{};
+} // namespace
 
-    plan.decision = decide_builtin(cmd, ctx);
-    plan.kind = classify_builtin(cmd);
-
-    return plan;
+BuiltinPlan plan_builtin(const parser::Command &cmd, ExecContext ctx) {
+    const BuiltinKind kind = classify_builtin(cmd);
+    return BuiltinPlan{kind, decide_builtin(kind, ctx)};
 }
 
-int run_builtin(ShellState &state, const Command &cmd, BuiltinKind kind) {
+int run_builtin(shell::ShellState &state, const parser::Command &cmd,
+                BuiltinKind kind) {
     switch (kind) {
     case BuiltinKind::Exit:
         return run_exit(state, cmd);
@@ -208,6 +199,4 @@ int run_builtin(ShellState &state, const Command &cmd, BuiltinKind kind) {
     return -1;
 }
 
-bool handle_builtin(ShellState &state, const Command &cmd) {
-    return run_builtin(state, cmd, classify_builtin(cmd)) != -1;
-}
+} // namespace builtins

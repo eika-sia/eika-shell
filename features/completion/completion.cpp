@@ -8,13 +8,21 @@
 #include <unistd.h>
 #include <vector>
 
+namespace features {
+namespace {
+
+bool is_token_separator(char c) {
+    return c == ' ' || c == '\t' || c == '|' || c == ';' || c == '&' ||
+           c == '<' || c == '>';
+}
+
 size_t get_current_token_start(const std::string &buf, size_t cursor) {
     if (cursor > buf.size()) {
         cursor = buf.size();
     }
 
     size_t start = cursor;
-    while (start > 0 && buf[start - 1] != ' ' && buf[start - 1] != '\t') {
+    while (start > 0 && !is_token_separator(buf[start - 1])) {
         --start;
     }
 
@@ -27,7 +35,7 @@ size_t get_current_token_end(const std::string &buf, size_t cursor) {
     }
 
     size_t end = cursor;
-    while (end < buf.size() && buf[end] != ' ' && buf[end] != '\t') {
+    while (end < buf.size() && !is_token_separator(buf[end])) {
         ++end;
     }
 
@@ -37,13 +45,17 @@ size_t get_current_token_end(const std::string &buf, size_t cursor) {
 bool is_command_position(const std::string &buf, size_t cursor) {
     size_t start = get_current_token_start(buf, cursor);
 
-    for (size_t i = 0; i < start; ++i) {
-        if (buf[i] != ' ' && buf[i] != '\t') {
-            return false;
-        }
+    while (start > 0 &&
+           (buf[start - 1] == ' ' || buf[start - 1] == '\t')) {
+        --start;
     }
 
-    return true;
+    if (start == 0) {
+        return true;
+    }
+
+    const char prev = buf[start - 1];
+    return prev == '|' || prev == ';' || prev == '&';
 }
 
 std::string longest_common_prefix(const std::vector<std::string> &matches) {
@@ -70,12 +82,12 @@ std::string longest_common_prefix(const std::vector<std::string> &matches) {
     return prefix;
 }
 
-static void redraw_line(const std::string &buf, size_t cursor, bool full) {
+void redraw_line(const std::string &buf, size_t cursor, bool full) {
     std::string prefix;
     if (full)
-        prefix = build_prompt();
+        prefix = shell::prompt::build_prompt();
     else
-        prefix = build_prompt_prefix();
+        prefix = shell::prompt::build_prompt_prefix();
 
     write(STDOUT_FILENO, "\r", 1);
     write(STDOUT_FILENO, "\033[2K", 4);
@@ -91,8 +103,7 @@ static void redraw_line(const std::string &buf, size_t cursor, bool full) {
     }
 }
 
-static void
-print_completion_candidates(const std::vector<std::string> &matches) {
+void print_completion_candidates(const std::vector<std::string> &matches) {
     write(STDOUT_FILENO, "\n", 1);
     for (const auto &m : matches) {
         write(STDOUT_FILENO, m.c_str(), m.size());
@@ -101,6 +112,8 @@ print_completion_candidates(const std::vector<std::string> &matches) {
     write(STDOUT_FILENO, "\n", 1);
 }
 
+} // namespace
+
 void handle_tab_completion(std::string &buf, size_t &cursor) {
     size_t token_start = get_current_token_start(buf, cursor);
     size_t token_end = get_current_token_end(buf, cursor);
@@ -108,12 +121,12 @@ void handle_tab_completion(std::string &buf, size_t &cursor) {
     std::string token = buf.substr(token_start, token_end - token_start);
 
     std::vector<std::string> matches;
-    if (looks_like_path_token(token)) {
-        matches = complete_path_token(token);
+    if (features::looks_like_path_token(token)) {
+        matches = features::complete_path_token(token);
     } else if (is_command_position(buf, cursor)) {
-        matches = complete_command_token(token);
+        matches = features::complete_command_token(token);
     } else {
-        matches = complete_path_token(token);
+        matches = features::complete_path_token(token);
     }
 
     if (matches.empty()) {
@@ -123,7 +136,7 @@ void handle_tab_completion(std::string &buf, size_t &cursor) {
     std::sort(matches.begin(), matches.end());
 
     if (matches.size() == 1) {
-        buf.replace(token_start, token_end - token_start + 1, matches[0] + " ");
+        buf.replace(token_start, token_end - token_start, matches[0] + " ");
         cursor = token_start + matches[0].size() + 1;
         redraw_line(buf, cursor, false);
         return;
@@ -140,3 +153,5 @@ void handle_tab_completion(std::string &buf, size_t &cursor) {
     print_completion_candidates(matches);
     redraw_line(buf, cursor, true);
 }
+
+} // namespace features

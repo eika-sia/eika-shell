@@ -10,9 +10,12 @@
 #include "../../features/completion/completion.hpp"
 #include "../prompt/prompt.hpp"
 
+namespace shell::input {
+namespace {
+
 // helper funckije za manual handling stvari (enable/disable jer zelimo da drugi
 // programi budu normalni)
-static void enable_input_mode(struct termios &old_state) {
+void enable_input_mode(struct termios &old_state) {
     if (tcgetattr(STDIN_FILENO, &old_state) == -1) {
         perror("tcgetattr");
         return;
@@ -31,7 +34,7 @@ static void enable_input_mode(struct termios &old_state) {
     }
 }
 
-static void restore_input_mode(const struct termios &old_state) {
+void restore_input_mode(const struct termios &old_state) {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_state) == -1) {
         perror("tcsetattr");
     }
@@ -39,11 +42,11 @@ static void restore_input_mode(const struct termios &old_state) {
 
 // svaki escape char moramo redrawat cijelu liniju :(
 // posljedica takvog inputa je
-static void redraw_line(const std::string &line, size_t cursor) {
+void redraw_line(const std::string &line, size_t cursor) {
     write(STDOUT_FILENO, "\r", 1);
     const char *clear = "\033[2K";
     write(STDOUT_FILENO, clear, 4);
-    std::string prompt = build_prompt_prefix();
+    std::string prompt = shell::prompt::build_prompt_prefix();
     write(STDOUT_FILENO, prompt.c_str(), prompt.size());
     write(STDOUT_FILENO, line.c_str(), line.size());
 
@@ -57,10 +60,10 @@ static void redraw_line(const std::string &line, size_t cursor) {
 
 // \033 escape sequence parsing (za strelice je lagano samo pomoicemo cursor
 // (isto esc seq) lijevo desno)
-static void handle_escape_sequence(std::string &buf, size_t &cursor,
-                                   const std::vector<std::string> &hist,
-                                   size_t &hist_index, std::string &draft,
-                                   bool &browsing_history) {
+void handle_escape_sequence(std::string &buf, size_t &cursor,
+                            const std::vector<std::string> &hist,
+                            size_t &hist_index, std::string &draft,
+                            bool &browsing_history) {
     char seq[3];
     if (read(STDIN_FILENO, &seq[0], 1) <= 0)
         return;
@@ -144,6 +147,8 @@ static void handle_escape_sequence(std::string &buf, size_t &cursor,
     }
 }
 
+} // namespace
+
 InputResult read_command_line(std::vector<std::string> &hist) {
     InputResult result{};
     std::string buf;
@@ -205,7 +210,7 @@ InputResult read_command_line(std::vector<std::string> &hist) {
             const char *clear = "\033[2J\033[H";
             write(STDOUT_FILENO, clear, 7);
 
-            std::string prompt = build_prompt();
+            std::string prompt = shell::prompt::build_prompt();
 
             write(STDOUT_FILENO, prompt.c_str(), prompt.size());
             write(STDOUT_FILENO, buf.c_str(), buf.size());
@@ -221,7 +226,7 @@ InputResult read_command_line(std::vector<std::string> &hist) {
         }
 
         if (ch == '\t') {
-            handle_tab_completion(buf, cursor);
+            features::handle_tab_completion(buf, cursor);
             continue;
         }
 
@@ -254,3 +259,5 @@ InputResult read_command_line(std::vector<std::string> &hist) {
     result.line = buf;
     return result;
 }
+
+} // namespace shell::input

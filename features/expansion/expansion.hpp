@@ -1,5 +1,13 @@
 #pragma once
 
-#include "../../shell/shell.hpp"
+#include "../../parser/parser.hpp"
 
-bool expand_command(ShellState &state, Command &cmd);
+namespace shell {
+struct ShellState;
+}
+
+namespace features {
+
+bool expand_command(shell::ShellState &state, parser::Command &cmd);
+
+} // namespace features

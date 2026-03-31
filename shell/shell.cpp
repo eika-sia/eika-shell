@@ -1,11 +1,8 @@
 #include "shell.hpp"
 
-#include <cstdio>
 #include <iostream>
 #include <string>
-#include <sys/wait.h>
 #include <unistd.h>
-#include <vector>
 
 #include "../builtins/builtins.hpp"
 #include "../features/expansion/expansion.hpp"
@@ -15,44 +12,12 @@
 #include "signals/signals.hpp"
 #include "terminal/terminal.hpp"
 
+namespace shell {
+
 void init_shell(ShellState &state) {
     state.shell_pgid = getpgrp();
-    init_terminal(state);
-    install_signal_handlers();
-}
-
-void cleanup_finished_processes(ShellState &state) {
-    int status = 0;
-
-    while (true) {
-        pid_t pid = waitpid(-1, &status, WNOHANG);
-        if (pid > 0) {
-            mark_process_finished(state, pid);
-            continue;
-        }
-        // za pid=0 (nista) ili pid=-1 (error) odustanemo
-        break;
-    }
-}
-
-void add_process(ShellState &state, pid_t pid, const Command &cmd) {
-    ProcessInfo new_proc = ProcessInfo{};
-    new_proc.background = cmd.background;
-    new_proc.running = true;
-    new_proc.command = cmd.raw;
-    new_proc.pgid = pid;
-    new_proc.pid = pid;
-
-    state.processes.push_back(new_proc);
-}
-
-void mark_process_finished(ShellState &state, pid_t pid) {
-    for (size_t i = 0; i < state.processes.size(); ++i) {
-        if (state.processes[i].pid == pid) {
-            state.processes[i].running = false;
-            break;
-        }
-    }
+    terminal::init_terminal(state);
+    signals::install_signal_handlers();
 }
 
 std::string trim(const std::string &source) {
@@ -67,20 +32,20 @@ void execute_command_line(ShellState &state, std::string line) {
     if (line.empty())
         return;
 
-    cleanup_finished_processes(state);
+    process::cleanup_finished_processes(state);
 
-    if (!expand_history(state, line))
+    if (!features::expand_history(state, line))
         return;
 
-    CommandList command_line = parse_command_line(line);
+    parser::CommandList command_line = parser::parse_command_line(line);
     if (!command_line.valid) {
         return;
     }
 
-    for (Pipeline pipe : command_line.pipelines) {
+    for (parser::Pipeline pipe : command_line.pipelines) {
 
-        for (Command &cmd : pipe.commands) {
-            if (!expand_command(state, cmd)) {
+        for (parser::Command &cmd : pipe.commands) {
+            if (!features::expand_command(state, cmd)) {
                 return;
             }
 
@@ -89,16 +54,14 @@ void execute_command_line(ShellState &state, std::string line) {
 
         if (pipe.commands.size() == 1) {
 
-            const Command &cmd = pipe.commands[0];
-            const ExecContext ctx = pipe.background
-                                        ? ExecContext::BackgroundStandalone
-                                        : ExecContext::ForegroundStandalone;
+            const parser::Command &cmd = pipe.commands[0];
+            const builtins::ExecContext ctx =
+                pipe.background ? builtins::ExecContext::BackgroundStandalone
+                                : builtins::ExecContext::ForegroundStandalone;
+            const builtins::BuiltinPlan plan = builtins::plan_builtin(cmd, ctx);
 
-            const BuiltinKind kind = classify_builtin(cmd);
-            const BuiltinDecision decision = decide_builtin(cmd, ctx);
-
-            if (decision == BuiltinDecision::RunInParent) {
-                run_parent_builtin_with_redirections(state, cmd, kind);
+            if (plan.decision == builtins::BuiltinDecision::RunInParent) {
+                exec::run_parent_builtin_with_redirections(state, cmd, plan);
 
                 if (!state.running) {
                     break;
@@ -106,15 +69,17 @@ void execute_command_line(ShellState &state, std::string line) {
                 continue;
             }
 
-            if (decision == BuiltinDecision::Reject) {
+            if (plan.decision == builtins::BuiltinDecision::Reject) {
                 std::cerr << cmd.args[0] << ": cannot run in this context\n";
                 continue;
             }
         }
 
-        launch_pipeline(state, pipe);
+        exec::launch_pipeline(state, pipe);
         if (!state.running) {
             break;
         }
     }
 }
+
+} // namespace shell

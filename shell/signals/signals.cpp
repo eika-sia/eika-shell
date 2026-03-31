@@ -4,8 +4,12 @@
 #include <signal.h>
 #include <unistd.h>
 
+namespace shell::signals {
+
 volatile sig_atomic_t g_foreground_pgid = -1;
 volatile sig_atomic_t g_sigint_received = 0;
+
+namespace {
 
 void handle_sigint(int signo) {
     (void)signo;
@@ -18,6 +22,8 @@ void handle_sigint(int signo) {
     }
 }
 
+} // namespace
+
 void install_signal_handlers() {
     struct sigaction sa{};
     sa.sa_handler = handle_sigint;
@@ -28,3 +34,5 @@ void install_signal_handlers() {
         perror("sigaction");
     }
 }
+
+} // namespace shell::signals

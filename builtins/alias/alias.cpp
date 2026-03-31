@@ -5,7 +5,9 @@
 #include <iostream>
 #include <string>
 
-int run_alias_list(ShellState &state, const Command &cmd) {
+namespace builtins {
+
+int run_alias_list(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() != 1) {
         std::cerr << "how did we get here part alias?\n";
         return 1;
@@ -18,7 +20,7 @@ int run_alias_list(ShellState &state, const Command &cmd) {
     return 0;
 }
 
-int run_alias_set(ShellState &state, const Command &cmd) {
+int run_alias_set(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() != 2) {
         std::cerr << "alias: invalid format\n";
         return 1;
@@ -51,7 +53,7 @@ int run_alias_set(ShellState &state, const Command &cmd) {
     return 0;
 }
 
-bool expand_aliases(const ShellState &state, Command &cmd) {
+bool expand_aliases(const shell::ShellState &state, parser::Command &cmd) {
     for (size_t depth = 0; depth < 16; ++depth) {
         if (!cmd.valid || cmd.args.empty() ||
             cmd.command_name_offset == std::string::npos) {
@@ -66,7 +68,7 @@ bool expand_aliases(const ShellState &state, Command &cmd) {
         expanded.replace(cmd.command_name_offset, cmd.command_name_length,
                          state.alias.at(cmd.args[0]));
 
-        cmd = parse_command(expanded);
+        cmd = parser::parse_command(expanded);
         if (!cmd.valid) {
             return false;
         }
@@ -75,3 +77,5 @@ bool expand_aliases(const ShellState &state, Command &cmd) {
     std::cerr << "alias: expansion loop detected\n";
     return false;
 }
+
+} // namespace builtins

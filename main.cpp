@@ -6,16 +6,17 @@
 #include "shell/shell.hpp"
 
 int main() {
-    ShellState state;
-    init_shell(state);
+    shell::ShellState state;
+    shell::init_shell(state);
 
     while (state.running) {
-        cleanup_finished_processes(state);
+        process::cleanup_finished_processes(state);
 
-        std::cout << build_prompt();
+        std::cout << shell::prompt::build_prompt();
         std::cout.flush();
 
-        InputResult input = read_command_line(state.history);
+        shell::input::InputResult input =
+            shell::input::read_command_line(state.history);
 
         if (input.interrupted) {
             continue;
@@ -25,14 +26,14 @@ int main() {
             break;
         }
 
-        std::string line = trim(input.line);
+        std::string line = shell::trim(input.line);
         if (line.empty()) {
             continue;
         }
-        execute_command_line(state, line);
+        shell::execute_command_line(state, line);
         state.history.push_back(line);
 
-        cleanup_finished_processes(state);
+        process::cleanup_finished_processes(state);
     }
 
     return 0;

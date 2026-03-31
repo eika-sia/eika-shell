@@ -3,12 +3,11 @@
 #include "../../builtins/builtins.hpp"
 #include "../shell.hpp"
 
-void launch_pipeline(ShellState &state, const Pipeline &pipe);
+namespace shell::exec {
 
-struct SavedStdio {
-    int stdin_fd = -1;
-    int stdout_fd = -1;
-};
+void launch_pipeline(ShellState &state, const parser::Pipeline &pipe);
+int run_parent_builtin_with_redirections(ShellState &state,
+                                         const parser::Command &cmd,
+                                         const builtins::BuiltinPlan &plan);
 
-int run_parent_builtin_with_redirections(ShellState &state, const Command &cmd,
-                                         BuiltinKind kind);
+} // namespace shell::exec

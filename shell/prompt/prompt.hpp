@@ -2,7 +2,10 @@
 
 #include <string>
 
-std::string build_prompt();
+namespace shell::prompt {
 
+std::string build_prompt();
 std::string build_prompt_header();
 std::string build_prompt_prefix();
+
+} // namespace shell::prompt

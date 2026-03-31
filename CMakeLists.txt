@@ -11,6 +11,7 @@ file(GLOB MAIN_FILE CONFIGURE_DEPENDS
 file(GLOB_RECURSE MODULE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/shell/*.cpp"
     "${CMAKE_SOURCE_DIR}/parser/*.cpp"
+    "${CMAKE_SOURCE_DIR}/process/*.cpp"
     "${CMAKE_SOURCE_DIR}/builtins/*.cpp"
     "${CMAKE_SOURCE_DIR}/features/*.cpp"
 )

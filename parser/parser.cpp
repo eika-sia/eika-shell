@@ -6,6 +6,9 @@
 
 #include "../shell/shell.hpp"
 
+namespace parser {
+namespace {
+
 enum class TokenKind {
     Word,
     InputRedirect,
@@ -163,7 +166,7 @@ bool parse_simple_command(const std::vector<Token> &tokens,
 
     const size_t raw_start = tokens.front().raw_start;
     const size_t raw_end = tokens.back().raw_end;
-    cmd.raw = trim(source.substr(raw_start, raw_end - raw_start));
+    cmd.raw = shell::trim(source.substr(raw_start, raw_end - raw_start));
 
     for (size_t i = 0; i < tokens.size(); ++i) {
         const Token &token = tokens[i];
@@ -265,11 +268,13 @@ bool parse_pipeline_tokens(const std::vector<Token> &tokens,
     return true;
 }
 
+} // namespace
+
 Command parse_command(const std::string &line) {
     Command cmd{};
     cmd.valid = false;
 
-    std::string work = trim(line);
+    std::string work = shell::trim(line);
     if (work.empty()) {
         return cmd;
     }
@@ -301,7 +306,7 @@ Pipeline parse_pipeline(const std::string &line) {
     Pipeline pipe{};
     pipe.valid = false;
 
-    std::string work = trim(line);
+    std::string work = shell::trim(line);
     if (work.empty()) {
         return pipe;
     }
@@ -349,7 +354,7 @@ CommandList parse_command_line(const std::string &line) {
     CommandList list{};
     list.valid = false;
 
-    std::string work = trim(line);
+    std::string work = shell::trim(line);
     if (work.empty()) {
         return list;
     }
@@ -422,3 +427,5 @@ CommandList parse_command_line(const std::string &line) {
     list.valid = true;
     return list;
 }
+
+} // namespace parser

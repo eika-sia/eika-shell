@@ -5,6 +5,8 @@
 #include <sys/types.h>
 #include <vector>
 
+namespace parser {
+
 struct Command {
     std::string raw;
     std::vector<std::string> args;
@@ -34,3 +36,5 @@ struct CommandList {
 Command parse_command(const std::string &line);
 Pipeline parse_pipeline(const std::string &line);
 CommandList parse_command_line(const std::string &line);
+
+} // namespace parser

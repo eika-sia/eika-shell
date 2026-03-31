@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+namespace shell::input {
+
 struct InputResult {
     std::string line;
     bool eof = false;
@@ -10,3 +12,5 @@ struct InputResult {
 };
 
 InputResult read_command_line(std::vector<std::string> &history);
+
+} // namespace shell::input

@@ -7,18 +7,13 @@
 #include <vector>
 
 #include "../parser/parser.hpp"
+#include "../process/process.hpp"
 
-struct ProcessInfo {
-    pid_t pid = -1;
-    pid_t pgid = -1;
-    std::string command;
-    bool running = false;
-    bool background = false;
-};
+namespace shell {
 
 struct ShellState {
     std::vector<std::string> history;
-    std::vector<ProcessInfo> processes;
+    std::vector<process::ProcessInfo> processes;
 
     pid_t shell_pgid = -1;
     pid_t foreground_pgid = -1;
@@ -30,10 +25,7 @@ struct ShellState {
 };
 
 void init_shell(ShellState &state);
-void cleanup_finished_processes(ShellState &state);
-
-void add_process(ShellState &state, pid_t pid, const Command &cmd);
-void mark_process_finished(ShellState &state, pid_t pid);
-
 void execute_command_line(ShellState &state, std::string line);
 std::string trim(const std::string &source);
+
+} // namespace shell
