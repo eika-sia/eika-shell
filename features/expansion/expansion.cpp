@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <string>
 
-#include "../alias/alias.hpp"
+#include "../../builtins/alias/alias.hpp"
 #include "../env/env.hpp"
 
 bool is_word_separator(char c) {

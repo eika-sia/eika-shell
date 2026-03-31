@@ -67,6 +67,8 @@ void execute_command_line(ShellState &state, std::string line) {
     if (line.empty())
         return;
 
+    cleanup_finished_processes(state);
+
     if (!expand_history(state, line))
         return;
 
@@ -96,7 +98,7 @@ void execute_command_line(ShellState &state, std::string line) {
             const BuiltinDecision decision = decide_builtin(cmd, ctx);
 
             if (decision == BuiltinDecision::RunInParent) {
-                run_builtin(state, cmd, kind);
+                run_parent_builtin_with_redirections(state, cmd, kind);
 
                 if (!state.running) {
                     break;

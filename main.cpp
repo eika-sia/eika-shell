@@ -31,6 +31,8 @@ int main() {
         }
         execute_command_line(state, line);
         state.history.push_back(line);
+
+        cleanup_finished_processes(state);
     }
 
     return 0;

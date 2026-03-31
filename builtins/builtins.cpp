@@ -7,7 +7,7 @@
 #include <string>
 #include <unistd.h>
 
-#include "../features/alias/alias.hpp"
+#include "./alias/alias.hpp"
 
 int run_exit(ShellState &state, const Command &cmd) {
     if (cmd.args.size() != 1) {
@@ -70,8 +70,6 @@ int run_ps(ShellState &state, const Command &cmd) {
         std::cerr << "ps: unexpected arguments\n";
         return 1;
     }
-
-    cleanup_finished_processes(state);
 
     std::cout << "PID   Name\n";
     for (const ProcessInfo &proc : state.processes) {
@@ -171,7 +169,7 @@ BuiltinDecision decide_builtin(const Command &cmd, ExecContext ctx) {
     }
 
     if (kind == BuiltinKind::History || kind == BuiltinKind::Ps ||
-        kind == BuiltinKind::Kill || kind == BuiltinKind::AliasList) {
+        kind == BuiltinKind::AliasList) {
         return BuiltinDecision::RunInChild;
     }
 

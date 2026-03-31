@@ -13,14 +13,17 @@ std::string build_prompt_header() {
     if (getcwd(cwd, sizeof(cwd)) != nullptr) {
         std::string path = cwd;
 
-        if (const char *home = getenv("HOME")) {
+        const char *home = getenv("HOME");
+        const char *user = getenv("USER");
+
+        if (home) {
             std::string h(home);
             if (path.compare(0, h.size(), h) == 0) {
                 path = "~" + path.substr(h.size());
             }
         }
 
-        return purple + "╭─ " + cyan + path + reset;
+        return purple + "╭─ " + user + cyan + " → " + path + reset;
     }
 
     return purple + "╭─" + reset;

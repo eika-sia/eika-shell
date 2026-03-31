@@ -202,3 +202,64 @@ void launch_pipeline(ShellState &state, const Pipeline &pipe) {
     state.foreground_pgid = -1;
     g_foreground_pgid = -1;
 }
+
+bool save_stdio(SavedStdio &saved) {
+    saved = SavedStdio{};
+
+    saved.stdin_fd = dup(STDIN_FILENO);
+    if (saved.stdin_fd == -1) {
+        perror("dup stdin");
+        return false;
+    }
+
+    saved.stdout_fd = dup(STDOUT_FILENO);
+    if (saved.stdout_fd == -1) {
+        perror("dup stdout");
+        close(saved.stdin_fd);
+        saved.stdin_fd = -1;
+        return false;
+    }
+
+    return true;
+}
+
+void restore_stdio(const SavedStdio &saved) {
+    if (saved.stdin_fd != -1) {
+        if (dup2(saved.stdin_fd, STDIN_FILENO) == -1) {
+            perror("dup2 restore stdin");
+        }
+        close(saved.stdin_fd);
+    }
+
+    if (saved.stdout_fd != -1) {
+        if (dup2(saved.stdout_fd, STDOUT_FILENO) == -1) {
+            perror("dup2 restore stdout");
+        }
+        close(saved.stdout_fd);
+    }
+}
+
+int run_parent_builtin_with_redirections(ShellState &state, const Command &cmd,
+                                         BuiltinKind kind) {
+    SavedStdio saved{};
+    if (!save_stdio(saved)) {
+        return 1;
+    }
+
+    std::cout.flush();
+    std::cerr.flush();
+
+    if (!apply_redirections(cmd)) {
+        restore_stdio(saved);
+        return 1;
+    }
+
+    int status = run_builtin(state, cmd, kind);
+
+    std::cout.flush();
+    std::cerr.flush();
+
+    restore_stdio(saved);
+
+    return status;
+}
