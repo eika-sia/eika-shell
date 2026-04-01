@@ -31,7 +31,6 @@ int main() {
             continue;
         }
         shell::execute_command_line(state, line);
-        state.history.push_back(line);
 
         process::cleanup_finished_processes(state);
     }

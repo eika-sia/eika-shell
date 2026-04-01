@@ -3,90 +3,53 @@
 #include <cctype>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 #include "../../shell/shell.hpp"
+#include "../shell_text/shell_text.hpp"
 
 namespace features {
 
 std::string expand_environment_variables(const shell::ShellState &state,
                                          const std::string &line) {
-    std::string out;
-    bool in_single_quote = false;
-    bool in_double_quote = false;
-
-    for (size_t i = 0; i < line.size(); ++i) {
-        char c = line[i];
-
-        if (c == '\'' && !in_double_quote) {
-            in_single_quote = !in_single_quote;
-            out.push_back(c);
-            continue;
-        }
-
-        if (c == '"' && !in_single_quote) {
-            in_double_quote = !in_double_quote;
-            out.push_back(c);
-            continue;
-        }
-
-        // Preserve escapes so reparsing keeps the same token boundaries.
-        if (c == '\\') {
-            if (i + 1 < line.size()) {
-                out.push_back('\\');
-                out.push_back(line[i + 1]);
-                ++i;
-            } else {
-                out.push_back('\\');
+    std::vector<shell_text::Replacement> replacements;
+    shell_text::for_each_unescaped_position(
+        line, [&](size_t &i, const shell_text::ScanState &scan_state) {
+            if (scan_state.in_single_quote || line[i] != '$' ||
+                i + 1 >= line.size()) {
+                return true;
             }
-            continue;
-        }
 
-        if (in_single_quote) {
-            out.push_back(c);
-            continue;
-        }
+            size_t end = i + 1;
+            std::string text;
 
-        if (c != '$') {
-            out.push_back(c);
-            continue;
-        }
+            if (line[end] == '?') {
+                text = std::to_string(state.last_status);
+                ++end;
+            } else {
+                if (!(std::isalpha(static_cast<unsigned char>(line[end])) ||
+                      line[end] == '_')) {
+                    return true;
+                }
 
-        // safety
-        if (i + 1 >= line.size()) {
-            out.push_back('$');
-            continue;
-        }
+                while (end < line.size() &&
+                       (std::isalnum(static_cast<unsigned char>(line[end])) ||
+                        line[end] == '_')) {
+                    ++end;
+                }
 
-        size_t j = i + 1;
+                const std::string name = line.substr(i + 1, end - (i + 1));
+                if (const char *value = std::getenv(name.c_str())) {
+                    text = value;
+                }
+            }
 
-        if (line[j] == '?') {
-            out += std::to_string(state.last_status);
-            i = j;
-            continue;
-        }
+            replacements.push_back(shell_text::Replacement{i, end, text});
+            i = end - 1;
+            return true;
+        });
 
-        if (!(std::isalpha(static_cast<unsigned char>(line[j])) ||
-              line[j] == '_')) {
-            out.push_back('$');
-            continue;
-        }
-
-        while (j < line.size() &&
-               (std::isalnum(static_cast<unsigned char>(line[j])) ||
-                line[j] == '_')) {
-            ++j;
-        }
-
-        std::string name = line.substr(i + 1, j - (i + 1));
-
-        if (const char *value = std::getenv(name.c_str())) {
-            out += value;
-        }
-
-        i = j - 1;
-    }
-
-    return out;
+    return shell_text::apply_replacements(line, replacements);
 }
 
 } // namespace features

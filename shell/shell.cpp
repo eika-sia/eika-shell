@@ -122,6 +122,8 @@ void execute_command_line(ShellState &state, std::string line) {
             state.last_status = chain_status;
         }
     }
+
+    features::save_command_line(state, line);
 }
 
 } // namespace shell

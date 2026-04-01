@@ -2,10 +2,12 @@
 
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 #include "../../builtins/alias/alias.hpp"
 #include "../../shell/shell.hpp"
 #include "../env/env.hpp"
+#include "../shell_text/shell_text.hpp"
 
 namespace features {
 namespace {
@@ -34,52 +36,24 @@ bool can_expand_tilde_at(const std::string &line, size_t i) {
 }
 
 std::string expand_tilde(const std::string &line) {
-    std::string expanded;
-    expanded.reserve(line.size());
-
     const char *home = std::getenv("HOME");
-
-    bool in_single_quote = false;
-    bool in_double_quote = false;
-    bool escape = false;
-
-    for (size_t i = 0; i < line.size(); ++i) {
-        char c = line[i];
-
-        if (escape) {
-            expanded.push_back(c);
-            escape = false;
-            continue;
-        }
-
-        if (c == '\\' && !in_single_quote) {
-            expanded.push_back(c);
-            escape = true;
-            continue;
-        }
-
-        if (c == '\'' && !in_double_quote) {
-            in_single_quote = !in_single_quote;
-            expanded.push_back(c);
-            continue;
-        }
-
-        if (c == '"' && !in_single_quote) {
-            in_double_quote = !in_double_quote;
-            expanded.push_back(c);
-            continue;
-        }
-
-        if (!in_single_quote && !in_double_quote &&
-            can_expand_tilde_at(line, i) && home != nullptr) {
-            expanded += home;
-            continue;
-        }
-
-        expanded.push_back(c);
+    if (home == nullptr) {
+        return line;
     }
 
-    return expanded;
+    std::vector<shell_text::Replacement> replacements;
+    shell_text::for_each_unescaped_position(
+        line, [&](size_t &i, const shell_text::ScanState &scan_state) {
+            if (scan_state.in_single_quote || scan_state.in_double_quote ||
+                !can_expand_tilde_at(line, i)) {
+                return true;
+            }
+
+            replacements.push_back(shell_text::Replacement{i, i + 1, home});
+            return true;
+        });
+
+    return shell_text::apply_replacements(line, replacements);
 }
 
 bool reparse_command(parser::Command &cmd, std::string expanded) {
