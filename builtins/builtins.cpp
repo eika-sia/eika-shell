@@ -147,6 +147,9 @@ BuiltinKind classify_builtin(const parser::Command &cmd) {
         return (cmd.args.size() == 1) ? BuiltinKind::AliasList
                                       : BuiltinKind::AliasSet;
     }
+    if (first == "unalias") {
+        return BuiltinKind::AliasSet;
+    }
 
     return BuiltinKind::None;
 }
@@ -189,7 +192,7 @@ int run_builtin(shell::ShellState &state, const parser::Command &cmd,
     case BuiltinKind::Kill:
         return run_kill(state, cmd);
     case BuiltinKind::AliasSet:
-        return run_alias_set(state, cmd);
+        return run_alias_manage(state, cmd);
     case BuiltinKind::AliasList:
         return run_alias_list(state, cmd);
     case BuiltinKind::None:
