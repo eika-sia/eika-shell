@@ -12,17 +12,21 @@ int main() {
     while (state.running) {
         process::cleanup_finished_processes(state);
 
-        std::cout << shell::prompt::build_prompt();
-        std::cout.flush();
+        if (state.interactive) {
+            std::cout << shell::prompt::build_prompt();
+            std::cout.flush();
+        }
 
         shell::input::InputResult input =
-            shell::input::read_command_line(state.history);
+            shell::input::read_command_line(state.history, state.interactive);
 
         if (input.interrupted) {
             continue;
         }
         if (input.eof) {
-            std::cout << '\n';
+            if (state.interactive) {
+                std::cout << '\n';
+            }
             break;
         }
 

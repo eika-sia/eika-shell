@@ -18,6 +18,7 @@ struct ShellState {
     pid_t foreground_pgid = -1;
 
     termios shell_term_settings{};
+    bool interactive = false;
     bool running = true;
     int last_status = 0;
 

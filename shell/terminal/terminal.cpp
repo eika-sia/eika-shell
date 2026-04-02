@@ -8,6 +8,11 @@
 namespace shell::terminal {
 
 void init_terminal(ShellState &state) {
+    state.interactive = isatty(STDIN_FILENO);
+    if (!state.interactive) {
+        return;
+    }
+
     if (tcgetattr(STDIN_FILENO, &state.shell_term_settings) == -1) {
         perror("tcgetattr");
         return;
@@ -23,12 +28,20 @@ void init_terminal(ShellState &state) {
 }
 
 void give_terminal_to(pid_t pgid) {
+    if (!isatty(STDIN_FILENO)) {
+        return;
+    }
+
     if (tcsetpgrp(STDIN_FILENO, pgid) == -1) {
         perror("tcsetpgrp");
     }
 }
 
 void reclaim_terminal(const ShellState &state) {
+    if (!state.interactive) {
+        return;
+    }
+
     if (tcsetpgrp(STDIN_FILENO, state.shell_pgid) == -1) {
         perror("tcsetpgrp");
     }

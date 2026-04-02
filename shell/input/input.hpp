@@ -11,6 +11,7 @@ struct InputResult {
     bool interrupted = false;
 };
 
-InputResult read_command_line(std::vector<std::string> &history);
+InputResult read_command_line(std::vector<std::string> &history,
+                              bool interactive);
 
 } // namespace shell::input

@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <iostream>
 #include <string>
 #include <termios.h>
 #include <unistd.h>
@@ -149,7 +150,22 @@ void handle_escape_sequence(std::string &buf, size_t &cursor,
 
 } // namespace
 
-InputResult read_command_line(std::vector<std::string> &hist) {
+InputResult read_non_interactive_command_line() {
+    InputResult result{};
+
+    if (!std::getline(std::cin, result.line)) {
+        result.eof = true;
+    }
+
+    return result;
+}
+
+InputResult read_command_line(std::vector<std::string> &hist,
+                              bool interactive) {
+    if (!interactive) {
+        return read_non_interactive_command_line();
+    }
+
     InputResult result{};
     std::string buf;
     std::string draft;
