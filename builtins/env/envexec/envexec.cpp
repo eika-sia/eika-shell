@@ -21,8 +21,15 @@ AssignmentSnapshot apply_temporary_assignments(
         const shell::ShellVariable *var = find_variable(state, assign.name);
         bool existed = var != nullptr;
 
+        // Snapshot the original value temporarily
+        // It is used for parent only builtin execution with preloading
+        // Example: `HOME=/tmp cd` sets pwd to /tmp
+        if (old.count(assign.name) == 0) {
+            old[assign.name] =
+                existed ? SavedVariable{true, *var} : SavedVariable{false, {}};
+        }
+
         if (existed) {
-            old[assign.name] = SavedVariable{true, *var};
             state.variables[assign.name] =
                 shell::ShellVariable{assign.value, var->exported};
         } else {

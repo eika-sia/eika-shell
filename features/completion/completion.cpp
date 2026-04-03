@@ -1,6 +1,7 @@
 #include "completion.hpp"
 #include "path_completion.hpp"
 
+#include "../shell_text/shell_text.hpp"
 #include "../../shell/prompt/prompt.hpp"
 
 #include <algorithm>
@@ -11,18 +12,13 @@
 namespace features {
 namespace {
 
-bool is_token_separator(char c) {
-    return c == ' ' || c == '\t' || c == '|' || c == ';' || c == '&' ||
-           c == '<' || c == '>';
-}
-
 size_t get_current_token_start(const std::string &buf, size_t cursor) {
     if (cursor > buf.size()) {
         cursor = buf.size();
     }
 
     size_t start = cursor;
-    while (start > 0 && !is_token_separator(buf[start - 1])) {
+    while (start > 0 && !shell_text::is_shell_separator(buf[start - 1])) {
         --start;
     }
 
@@ -35,7 +31,7 @@ size_t get_current_token_end(const std::string &buf, size_t cursor) {
     }
 
     size_t end = cursor;
-    while (end < buf.size() && !is_token_separator(buf[end])) {
+    while (end < buf.size() && !shell_text::is_shell_separator(buf[end])) {
         ++end;
     }
 
@@ -82,28 +78,6 @@ std::string longest_common_prefix(const std::vector<std::string> &matches) {
     return prefix;
 }
 
-void redraw_line(const shell::ShellState &state, const std::string &buf,
-                 size_t cursor, bool full) {
-    std::string prefix;
-    if (full)
-        prefix = shell::prompt::build_prompt(state);
-    else
-        prefix = shell::prompt::build_prompt_prefix();
-
-    write(STDOUT_FILENO, "\r", 1);
-    write(STDOUT_FILENO, "\033[2K", 4);
-
-    write(STDOUT_FILENO, prefix.c_str(), prefix.size());
-    write(STDOUT_FILENO, buf.c_str(), buf.size());
-
-    size_t right_edge = buf.size();
-    if (right_edge > cursor) {
-        std::string move_left =
-            "\033[" + std::to_string(right_edge - cursor) + "D";
-        write(STDOUT_FILENO, move_left.c_str(), move_left.size());
-    }
-}
-
 void print_completion_candidates(const std::vector<std::string> &matches) {
     write(STDOUT_FILENO, "\n", 1);
     for (const auto &m : matches) {
@@ -140,7 +114,7 @@ void handle_tab_completion(const shell::ShellState &state, std::string &buf,
     if (matches.size() == 1) {
         buf.replace(token_start, token_end - token_start, matches[0] + " ");
         cursor = token_start + matches[0].size() + 1;
-        redraw_line(state, buf, cursor, false);
+        shell::prompt::redraw_input_line(state, buf, cursor, false);
         return;
     }
 
@@ -148,12 +122,12 @@ void handle_tab_completion(const shell::ShellState &state, std::string &buf,
     if (lcp.size() > token.size()) {
         buf.replace(token_start, token_end - token_start, lcp);
         cursor = token_start + lcp.size();
-        redraw_line(state, buf, cursor, false);
+        shell::prompt::redraw_input_line(state, buf, cursor, false);
         return;
     }
 
     print_completion_candidates(matches);
-    redraw_line(state, buf, cursor, true);
+    shell::prompt::redraw_input_line(state, buf, cursor, true);
 }
 
 } // namespace features

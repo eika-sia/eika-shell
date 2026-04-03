@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "../../parser/parser.hpp"
 #include "../../shell/shell.hpp"
 
 namespace builtins::env {

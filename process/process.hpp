@@ -4,8 +4,6 @@
 #include <sys/types.h>
 #include <vector>
 
-#include "../parser/parser.hpp"
-
 namespace shell {
 struct ShellState;
 }
@@ -26,13 +24,10 @@ ProcessInfo *find_process(shell::ShellState &state, pid_t pid);
 const ProcessInfo *find_process(const shell::ShellState &state, pid_t pid);
 
 void add_process(shell::ShellState &state, pid_t pid, pid_t pgid,
-                 const parser::Command &cmd);
+                 const std::string &command, bool background);
 void mark_process_finished(shell::ShellState &state, pid_t pid,
                            int raw_wait_status);
 
-bool process_reaper(shell::ShellState &state, pid_t pid, int options,
-                    int *raw_wait_status = nullptr,
-                    pid_t *reaped_pid = nullptr);
 void cleanup_finished_processes(shell::ShellState &state);
 int shell_status_from_wait_status(int raw_wait_status);
 int wait_for_processes(shell::ShellState &state,

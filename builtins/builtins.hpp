@@ -13,10 +13,10 @@ enum class BuiltinKind {
     Ps,
     Kill,
     AliasList,
-    AliasSet,
+    AliasManage,
     SetList,
     ExportList,
-    ExportSet
+    ExportManage
 };
 enum class ExecContext {
     ForegroundStandalone,

@@ -13,6 +13,17 @@
 namespace builtins {
 namespace {
 
+void update_pwd(shell::ShellState &state) {
+    char *cwd = getcwd(nullptr, 0);
+    if (cwd == nullptr) {
+        perror("getcwd");
+        return;
+    }
+
+    env::set_shell_variable(state, "PWD", cwd);
+    free(cwd);
+}
+
 int run_exit(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() != 1) {
         std::cerr << "exit: unexpected arguments\n";
@@ -31,11 +42,12 @@ int run_exit(shell::ShellState &state, const parser::Command &cmd) {
     return status;
 }
 
-int run_cd(const shell::ShellState &state, const parser::Command &cmd) {
+int run_cd(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() == 1) {
         const shell::ShellVariable *home = env::find_variable(state, "HOME");
         if (home != nullptr) {
             if (chdir(home->value.c_str()) == 0) {
+                update_pwd(state);
                 return 0;
             }
             perror("cd");
@@ -51,6 +63,7 @@ int run_cd(const shell::ShellState &state, const parser::Command &cmd) {
     }
 
     if (chdir(cmd.args[1].c_str()) == 0) {
+        update_pwd(state);
         return 0;
     }
 
@@ -147,20 +160,20 @@ BuiltinKind classify_builtin(const parser::Command &cmd) {
     }
     if (first == "alias") {
         return (cmd.args.size() == 1) ? BuiltinKind::AliasList
-                                      : BuiltinKind::AliasSet;
+                                      : BuiltinKind::AliasManage;
     }
     if (first == "unalias") {
-        return BuiltinKind::AliasSet;
+        return BuiltinKind::AliasManage;
     }
     if (first == "set") {
         return BuiltinKind::SetList;
     }
     if (first == "export") {
         return (cmd.args.size() == 1) ? BuiltinKind::ExportList
-                                      : BuiltinKind::ExportSet;
+                                      : BuiltinKind::ExportManage;
     }
     if (first == "unset") {
-        return BuiltinKind::ExportSet;
+        return BuiltinKind::ExportManage;
     }
 
     return BuiltinKind::None;
@@ -204,13 +217,13 @@ int run_builtin(shell::ShellState &state, const parser::Command &cmd,
         return run_ps(state, cmd);
     case BuiltinKind::Kill:
         return run_kill(state, cmd);
-    case BuiltinKind::AliasSet:
+    case BuiltinKind::AliasManage:
         return run_alias_manage(state, cmd);
     case BuiltinKind::AliasList:
         return run_alias_list(state, cmd);
     case BuiltinKind::SetList:
         return env::run_set_list(state, cmd);
-    case BuiltinKind::ExportSet:
+    case BuiltinKind::ExportManage:
         return env::run_export_manage(state, cmd);
     case BuiltinKind::ExportList:
         return env::run_export_list(state, cmd);

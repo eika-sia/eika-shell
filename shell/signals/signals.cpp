@@ -7,7 +7,6 @@
 namespace shell::signals {
 
 volatile sig_atomic_t g_foreground_pgid = -1;
-volatile sig_atomic_t g_sigint_received = 0;
 
 namespace {
 
@@ -17,7 +16,6 @@ void handle_sigint(int signo) {
     if (g_foreground_pgid > 0) {
         kill(-g_foreground_pgid, SIGINT);
     } else {
-        g_sigint_received = 1;
         write(STDOUT_FILENO, "\n", 1);
     }
 }

@@ -103,7 +103,8 @@ int cleanup_failed_pipeline_start(ShellState &state,
     return 1;
 }
 
-int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
+int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
+                      bool background) {
     if (pipe.commands.empty()) {
         std::cerr << "how did we get here?\n";
         return 1;
@@ -175,7 +176,7 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
             // builtin pipelining
             builtins::ExecContext ctx =
                 (n > 1) ? builtins::ExecContext::PipelineStage
-                        : (pipe.background
+                        : (background
                                ? builtins::ExecContext::BackgroundStandalone
                                : builtins::ExecContext::ForegroundStandalone);
             builtins::BuiltinPlan plan = builtins::plan_builtin(cmd, ctx);
@@ -216,12 +217,12 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
         }
 
         pids.push_back(pid);
-        process::add_process(state, pid, pipeline_pgid, cmd);
+        process::add_process(state, pid, pipeline_pgid, cmd.raw, background);
     }
 
     close_pipe_fds(fds);
 
-    if (pipe.background) {
+    if (background) {
         return 0;
     }
 
@@ -277,8 +278,33 @@ void restore_stdio(const SavedStdio &saved) {
 
 } // namespace
 
-int run_pipeline(ShellState &state, const parser::Pipeline &pipe) {
-    return run_pipeline_impl(state, pipe);
+int run_pipeline(ShellState &state, const parser::Pipeline &pipe,
+                 bool background) {
+    return run_pipeline_impl(state, pipe, background);
+}
+
+int run_parent_assignments_with_redirections(ShellState &state,
+                                             const parser::Command &cmd) {
+    SavedStdio saved{};
+    if (!save_stdio(saved)) {
+        return 1;
+    }
+
+    std::cout.flush();
+    std::cerr.flush();
+
+    if (!apply_redirections(cmd)) {
+        restore_stdio(saved);
+        return 1;
+    }
+
+    builtins::env::apply_persistent_assignments(state, cmd.assignments);
+
+    std::cout.flush();
+    std::cerr.flush();
+
+    restore_stdio(saved);
+    return 0;
 }
 
 int run_parent_builtin_with_redirections(ShellState &state,

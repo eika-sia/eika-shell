@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 
-#include "../../builtins/alias/alias.hpp"
 #include "../../builtins/env/env.hpp"
 #include "../../shell/shell.hpp"
 #include "../shell_text/shell_text.hpp"
@@ -12,17 +11,13 @@
 namespace features {
 namespace {
 
-bool is_word_separator(char c) {
-    return c == ' ' || c == '\t' || c == '|' || c == ';' || c == '&' ||
-           c == '<' || c == '>';
-}
-
 bool can_expand_tilde_at(const std::string &line, size_t i) {
     if (line[i] != '~') {
         return false;
     }
 
-    const bool at_word_start = (i == 0) || is_word_separator(line[i - 1]);
+    const bool at_word_start =
+        (i == 0) || shell_text::is_shell_separator(line[i - 1]);
     if (!at_word_start) {
         return false;
     }
@@ -32,7 +27,7 @@ bool can_expand_tilde_at(const std::string &line, size_t i) {
     }
 
     const char next = line[i + 1];
-    return next == '/' || is_word_separator(next);
+    return next == '/' || shell_text::is_shell_separator(next);
 }
 
 std::string expand_tilde(const shell::ShellState &state,
@@ -67,10 +62,6 @@ bool reparse_command(parser::Command &cmd, std::string expanded) {
 } // namespace
 
 bool expand_command(shell::ShellState &state, parser::Command &cmd) {
-    if (!builtins::expand_aliases(state, cmd)) {
-        return false;
-    }
-
     if (!reparse_command(cmd,
                          builtins::env::expand_variables(state, cmd.raw))) {
         return false;

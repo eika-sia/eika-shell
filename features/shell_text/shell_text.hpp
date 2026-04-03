@@ -20,6 +20,7 @@ struct Replacement {
 
 using ScanVisitor = std::function<bool(size_t &, const ScanState &)>;
 
+bool is_shell_separator(char c);
 bool for_each_unescaped_position(const std::string &line,
                                  const ScanVisitor &visitor);
 

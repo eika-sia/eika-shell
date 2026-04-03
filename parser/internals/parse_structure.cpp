@@ -54,9 +54,9 @@ bool parse_pipeline_tokens(const std::vector<Token> &tokens,
 
 bool parse_and_or_tokens(const std::vector<Token> &tokens,
                          const std::string &source,
-                         ConditionalPipeline &and_or) {
-    and_or = ConditionalPipeline{};
-    and_or.valid = false;
+                         ConditionalChain &chain) {
+    chain = ConditionalChain{};
+    chain.valid = false;
 
     if (tokens.empty()) {
         std::cerr << "syntax error: missing command\n";
@@ -84,7 +84,7 @@ bool parse_and_or_tokens(const std::vector<Token> &tokens,
         }
 
         pipe.run_condition = next_condition;
-        and_or.pipelines.push_back(pipe);
+        chain.pipelines.push_back(pipe);
         current_pipeline_tokens.clear();
         next_condition = (token.kind == TokenKind::AndIf)
                              ? RunCondition::IfPreviousSucceeded
@@ -102,8 +102,8 @@ bool parse_and_or_tokens(const std::vector<Token> &tokens,
     }
 
     pipe.run_condition = next_condition;
-    and_or.pipelines.push_back(pipe);
-    and_or.valid = true;
+    chain.pipelines.push_back(pipe);
+    chain.valid = true;
     return true;
 }
 

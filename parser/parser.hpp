@@ -22,7 +22,6 @@ struct Command {
     std::string raw;
     std::vector<std::string> args;
     std::vector<Assignment> assignments;
-    bool background = false;
 
     std::string input_file = "";
     std::string output_file = "";
@@ -35,13 +34,12 @@ struct Command {
 
 struct Pipeline {
     std::vector<Command> commands;
-    bool background = false;
     RunCondition run_condition = RunCondition::Always;
 
     bool valid = true;
 };
 
-struct ConditionalPipeline {
+struct ConditionalChain {
     std::vector<Pipeline> pipelines;
     bool background = false;
 
@@ -49,7 +47,7 @@ struct ConditionalPipeline {
 };
 
 struct CommandList {
-    std::vector<ConditionalPipeline> and_or_pipelines;
+    std::vector<ConditionalChain> conditional_chains;
     bool valid = true;
 };
 

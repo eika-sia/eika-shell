@@ -34,6 +34,6 @@ bool parse_pipeline_tokens(const std::vector<Token> &tokens,
                            const std::string &source, Pipeline &pipe);
 bool parse_and_or_tokens(const std::vector<Token> &tokens,
                          const std::string &source,
-                         ConditionalPipeline &and_or);
+                         ConditionalChain &chain);
 
 } // namespace parser

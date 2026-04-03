@@ -17,10 +17,10 @@ namespace {
 
 // helper funckije za manual handling stvari (enable/disable jer zelimo da drugi
 // programi budu normalni)
-void enable_input_mode(struct termios &old_state) {
+bool enable_input_mode(struct termios &old_state) {
     if (tcgetattr(STDIN_FILENO, &old_state) == -1) {
         perror("tcgetattr");
-        return;
+        return false;
     }
 
     struct termios raw = old_state;
@@ -33,7 +33,10 @@ void enable_input_mode(struct termios &old_state) {
 
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
         perror("tcsetattr");
+        return false;
     }
+
+    return true;
 }
 
 void restore_input_mode(const struct termios &old_state) {
@@ -42,27 +45,10 @@ void restore_input_mode(const struct termios &old_state) {
     }
 }
 
-// svaki escape char moramo redrawat cijelu liniju :(
-// posljedica takvog inputa je
-void redraw_line(const std::string &line, size_t cursor) {
-    write(STDOUT_FILENO, "\r", 1);
-    const char *clear = "\033[2K";
-    write(STDOUT_FILENO, clear, 4);
-    std::string prompt = shell::prompt::build_prompt_prefix();
-    write(STDOUT_FILENO, prompt.c_str(), prompt.size());
-    write(STDOUT_FILENO, line.c_str(), line.size());
-
-    size_t right_edge = line.size();
-    if (right_edge > cursor) {
-        std::string move_left =
-            "\033[" + std::to_string(right_edge - cursor) + "D";
-        write(STDOUT_FILENO, move_left.c_str(), move_left.size());
-    }
-}
-
 // \033 escape sequence parsing (za strelice je lagano samo pomoicemo cursor
 // (isto esc seq) lijevo desno)
-void handle_escape_sequence(std::string &buf, size_t &cursor,
+void handle_escape_sequence(const shell::ShellState &state, std::string &buf,
+                            size_t &cursor,
                             const std::vector<std::string> &hist,
                             size_t &hist_index, std::string &draft,
                             bool &browsing_history) {
@@ -92,7 +78,7 @@ void handle_escape_sequence(std::string &buf, size_t &cursor,
 
         buf = hist[hist_index];
         cursor = buf.size();
-        redraw_line(buf, cursor);
+        shell::prompt::redraw_input_line(state, buf, cursor, false);
         break;
     }
 
@@ -111,7 +97,7 @@ void handle_escape_sequence(std::string &buf, size_t &cursor,
         }
 
         cursor = buf.size();
-        redraw_line(buf, cursor);
+        shell::prompt::redraw_input_line(state, buf, cursor, false);
         break;
     }
 
@@ -143,7 +129,7 @@ void handle_escape_sequence(std::string &buf, size_t &cursor,
         if (seq[2] == '~') {
             if (cursor < buf.size()) {
                 buf.erase(cursor, 1);
-                redraw_line(buf, cursor);
+                shell::prompt::redraw_input_line(state, buf, cursor, false);
             }
         }
     }
@@ -176,7 +162,7 @@ InputResult read_command_line(shell::ShellState &state) {
     bool browsing_history = false;
 
     struct termios old_state;
-    enable_input_mode(old_state);
+    const bool input_mode_enabled = enable_input_mode(old_state);
 
     while (true) {
         ssize_t n = read(STDIN_FILENO, &ch, 1);
@@ -200,8 +186,8 @@ InputResult read_command_line(shell::ShellState &state) {
         }
 
         if (ch == '\033') {
-            handle_escape_sequence(buf, cursor, state.history, hist_index, draft,
-                                   browsing_history);
+            handle_escape_sequence(state, buf, cursor, state.history, hist_index,
+                                   draft, browsing_history);
             continue;
         }
 
@@ -255,7 +241,7 @@ InputResult read_command_line(shell::ShellState &state) {
 
                 buf.erase(cursor - 1, 1);
                 cursor--;
-                redraw_line(buf, cursor);
+                shell::prompt::redraw_input_line(state, buf, cursor, false);
             }
             continue;
         }
@@ -268,10 +254,12 @@ InputResult read_command_line(shell::ShellState &state) {
 
         buf.insert(cursor, 1, ch);
         cursor++;
-        redraw_line(buf, cursor);
+        shell::prompt::redraw_input_line(state, buf, cursor, false);
     }
 
-    restore_input_mode(old_state);
+    if (input_mode_enabled) {
+        restore_input_mode(old_state);
+    }
     result.line = buf;
     return result;
 }

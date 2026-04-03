@@ -2,6 +2,11 @@
 
 namespace features::shell_text {
 
+bool is_shell_separator(char c) {
+    return c == ' ' || c == '\t' || c == '|' || c == ';' || c == '&' ||
+           c == '<' || c == '>';
+}
+
 bool for_each_unescaped_position(const std::string &line,
                                  const ScanVisitor &visitor) {
     ScanState state{};

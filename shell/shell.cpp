@@ -4,9 +4,9 @@
 #include <string>
 #include <unistd.h>
 
+#include "../builtins/alias/alias.hpp"
 #include "../builtins/builtins.hpp"
 #include "../builtins/env/env.hpp"
-#include "../builtins/env/envexec/envexec.hpp"
 #include "../features/expansion/expansion.hpp"
 #include "../features/history/history.hpp"
 #include "../parser/parser.hpp"
@@ -31,26 +31,26 @@ bool should_execute_pipeline(parser::RunCondition condition,
     return true;
 }
 
-int dispatch_pipeline(ShellState &state, parser::Pipeline &pipe) {
+int dispatch_pipeline(ShellState &state, parser::Pipeline &pipe,
+                      bool background) {
     for (parser::Command &cmd : pipe.commands) {
         if (!features::expand_command(state, cmd)) {
             return 1;
         }
-
-        cmd.background = pipe.background;
     }
 
     if (pipe.commands.size() == 1) {
         const parser::Command &cmd = pipe.commands[0];
 
         if (cmd.args.empty() && !cmd.assignments.empty()) {
-            builtins::env::apply_persistent_assignments(state, cmd.assignments);
-            return 0;
+            // Assignment-only commands still run redirections as a shell no-op,
+            // so `A=1 >out` both persists `A` and creates/truncates `out`.
+            return exec::run_parent_assignments_with_redirections(state, cmd);
         }
 
         const builtins::ExecContext ctx =
-            pipe.background ? builtins::ExecContext::BackgroundStandalone
-                            : builtins::ExecContext::ForegroundStandalone;
+            background ? builtins::ExecContext::BackgroundStandalone
+                       : builtins::ExecContext::ForegroundStandalone;
         const builtins::BuiltinPlan plan = builtins::plan_builtin(cmd, ctx);
 
         if (plan.decision == builtins::BuiltinDecision::RunInParent) {
@@ -65,7 +65,7 @@ int dispatch_pipeline(ShellState &state, parser::Pipeline &pipe) {
         }
     }
 
-    return exec::run_pipeline(state, pipe);
+    return exec::run_pipeline(state, pipe, background);
 }
 
 } // namespace
@@ -102,8 +102,16 @@ void execute_command_line(ShellState &state, std::string line) {
         return;
     }
 
-    for (parser::ConditionalPipeline and_or : command_line.and_or_pipelines) {
-        if (and_or.background && and_or.pipelines.size() > 1) {
+    if (!builtins::expand_aliases(state, command_line)) {
+        state.last_status = 1;
+        return;
+    }
+
+    for (parser::ConditionalChain chain : command_line.conditional_chains) {
+        // A background conditional chain needs its own controller process to
+        // keep evaluating later `&&` / `||` stages after the parent returns.
+        // That is not implemented as of yet.
+        if (chain.background && chain.pipelines.size() > 1) {
             std::cerr
                 << "background conditional execution not implemented yet\n";
             state.last_status = 1;
@@ -113,13 +121,12 @@ void execute_command_line(ShellState &state, std::string line) {
         int chain_status = state.last_status;
         bool executed_any_pipeline = false;
 
-        for (parser::Pipeline pipe : and_or.pipelines) {
-            pipe.background = and_or.background;
+        for (parser::Pipeline pipe : chain.pipelines) {
             if (!should_execute_pipeline(pipe.run_condition, chain_status)) {
                 continue;
             }
 
-            chain_status = dispatch_pipeline(state, pipe);
+            chain_status = dispatch_pipeline(state, pipe, chain.background);
             state.last_status = chain_status;
             executed_any_pipeline = true;
             if (!state.running) {

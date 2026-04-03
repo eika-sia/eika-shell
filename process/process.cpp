@@ -8,50 +8,11 @@
 #include "../shell/shell.hpp"
 
 namespace process {
-
-ProcessInfo *find_process(shell::ShellState &state, pid_t pid) {
-    for (ProcessInfo &proc : state.processes) {
-        if (proc.pid == pid) {
-            return &proc;
-        }
-    }
-
-    return nullptr;
-}
-
-const ProcessInfo *find_process(const shell::ShellState &state, pid_t pid) {
-    for (const ProcessInfo &proc : state.processes) {
-        if (proc.pid == pid) {
-            return &proc;
-        }
-    }
-
-    return nullptr;
-}
-
-void add_process(shell::ShellState &state, pid_t pid, pid_t pgid,
-                 const parser::Command &cmd) {
-    ProcessInfo new_proc{};
-    new_proc.background = cmd.background;
-    new_proc.running = true;
-    new_proc.command = cmd.raw;
-    new_proc.pgid = pgid;
-    new_proc.pid = pid;
-
-    state.processes.push_back(new_proc);
-}
-
-void mark_process_finished(shell::ShellState &state, pid_t pid,
-                           int raw_wait_status) {
-    if (ProcessInfo *proc = find_process(state, pid)) {
-        proc->running = false;
-        proc->raw_wait_status = raw_wait_status;
-        proc->has_wait_status = true;
-    }
-}
+namespace {
 
 bool process_reaper(shell::ShellState &state, pid_t pid, int options,
-                    int *raw_wait_status, pid_t *reaped_pid) {
+                    int *raw_wait_status = nullptr,
+                    pid_t *reaped_pid = nullptr) {
     int status = 0;
 
     while (true) {
@@ -82,12 +43,56 @@ bool process_reaper(shell::ShellState &state, pid_t pid, int options,
     }
 }
 
+} // namespace
+
+ProcessInfo *find_process(shell::ShellState &state, pid_t pid) {
+    for (ProcessInfo &proc : state.processes) {
+        if (proc.pid == pid) {
+            return &proc;
+        }
+    }
+
+    return nullptr;
+}
+
+const ProcessInfo *find_process(const shell::ShellState &state, pid_t pid) {
+    for (const ProcessInfo &proc : state.processes) {
+        if (proc.pid == pid) {
+            return &proc;
+        }
+    }
+
+    return nullptr;
+}
+
+void add_process(shell::ShellState &state, pid_t pid, pid_t pgid,
+                 const std::string &command, bool background) {
+    ProcessInfo new_proc{};
+    new_proc.background = background;
+    new_proc.running = true;
+    new_proc.command = command;
+    new_proc.pgid = pgid;
+    new_proc.pid = pid;
+
+    state.processes.push_back(new_proc);
+}
+
+void mark_process_finished(shell::ShellState &state, pid_t pid,
+                           int raw_wait_status) {
+    if (ProcessInfo *proc = find_process(state, pid)) {
+        proc->running = false;
+        proc->raw_wait_status = raw_wait_status;
+        proc->has_wait_status = true;
+    }
+}
+
 void cleanup_finished_processes(shell::ShellState &state) {
     while (process_reaper(state, -1, WNOHANG)) {
     }
 }
 
 int shell_status_from_wait_status(int raw_wait_status) {
+    // Shell conditionals and `$?` consume normalized shell exit codes
     if (WIFEXITED(raw_wait_status)) {
         return WEXITSTATUS(raw_wait_status);
     }
