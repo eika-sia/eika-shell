@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "../../builtins/builtins.hpp"
+#include "../../builtins/env/envexec/envexec.hpp"
 #include "../signals/signals.hpp"
 #include "../terminal/terminal.hpp"
 
@@ -88,10 +89,10 @@ void close_pipe_fds(std::vector<std::array<int, 2>> &fds) {
     }
 }
 
-int cleanup_failed_pipeline_launch(ShellState &state,
-                                   std::vector<std::array<int, 2>> &fds,
-                                   const std::vector<pid_t> &pids,
-                                   pid_t pipeline_pgid) {
+int cleanup_failed_pipeline_start(ShellState &state,
+                                  std::vector<std::array<int, 2>> &fds,
+                                  const std::vector<pid_t> &pids,
+                                  pid_t pipeline_pgid) {
     close_pipe_fds(fds);
 
     if (pipeline_pgid > 0) {
@@ -102,7 +103,7 @@ int cleanup_failed_pipeline_launch(ShellState &state,
     return 1;
 }
 
-int launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
+int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
     if (pipe.commands.empty()) {
         std::cerr << "how did we get here?\n";
         return 1;
@@ -131,8 +132,8 @@ int launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
         pid_t pid = fork();
         if (pid < 0) {
             perror("fork");
-            return cleanup_failed_pipeline_launch(state, fds, pids,
-                                                  pipeline_pgid);
+            return cleanup_failed_pipeline_start(state, fds, pids,
+                                                 pipeline_pgid);
         }
 
         if (pid == 0) {
@@ -166,13 +167,17 @@ int launch_pipeline_impl(ShellState &state, const parser::Pipeline &pipe) {
                 _exit(1);
             }
 
+            if (!cmd.assignments.empty()) {
+                builtins::env::apply_temporary_assignments(state,
+                                                           cmd.assignments);
+            }
+
             // builtin pipelining
             builtins::ExecContext ctx =
-                (n > 1)
-                    ? builtins::ExecContext::PipelineStage
-                    : (pipe.background
-                           ? builtins::ExecContext::BackgroundStandalone
-                           : builtins::ExecContext::ForegroundStandalone);
+                (n > 1) ? builtins::ExecContext::PipelineStage
+                        : (pipe.background
+                               ? builtins::ExecContext::BackgroundStandalone
+                               : builtins::ExecContext::ForegroundStandalone);
             builtins::BuiltinPlan plan = builtins::plan_builtin(cmd, ctx);
 
             if (plan.decision == builtins::BuiltinDecision::RunInChild) {
@@ -272,8 +277,8 @@ void restore_stdio(const SavedStdio &saved) {
 
 } // namespace
 
-int launch_pipeline(ShellState &state, const parser::Pipeline &pipe) {
-    return launch_pipeline_impl(state, pipe);
+int run_pipeline(ShellState &state, const parser::Pipeline &pipe) {
+    return run_pipeline_impl(state, pipe);
 }
 
 int run_parent_builtin_with_redirections(ShellState &state,
@@ -292,7 +297,17 @@ int run_parent_builtin_with_redirections(ShellState &state,
         return 1;
     }
 
+    builtins::env::AssignmentSnapshot snapshot;
+    if (!cmd.assignments.empty()) {
+        snapshot =
+            builtins::env::apply_temporary_assignments(state, cmd.assignments);
+    }
+
     int status = builtins::run_builtin(state, cmd, plan.kind);
+
+    if (!cmd.assignments.empty()) {
+        builtins::env::restore_temporary_assignments(state, snapshot);
+    }
 
     std::cout.flush();
     std::cerr.flush();

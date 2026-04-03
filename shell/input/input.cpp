@@ -10,6 +10,7 @@
 
 #include "../../features/completion/completion.hpp"
 #include "../prompt/prompt.hpp"
+#include "../shell.hpp"
 
 namespace shell::input {
 namespace {
@@ -160,9 +161,8 @@ InputResult read_non_interactive_command_line() {
     return result;
 }
 
-InputResult read_command_line(std::vector<std::string> &hist,
-                              bool interactive) {
-    if (!interactive) {
+InputResult read_command_line(shell::ShellState &state) {
+    if (!state.interactive) {
         return read_non_interactive_command_line();
     }
 
@@ -172,7 +172,7 @@ InputResult read_command_line(std::vector<std::string> &hist,
 
     char ch = '\0';
     size_t cursor = 0;
-    size_t hist_index = hist.size();
+    size_t hist_index = state.history.size();
     bool browsing_history = false;
 
     struct termios old_state;
@@ -200,7 +200,7 @@ InputResult read_command_line(std::vector<std::string> &hist,
         }
 
         if (ch == '\033') {
-            handle_escape_sequence(buf, cursor, hist, hist_index, draft,
+            handle_escape_sequence(buf, cursor, state.history, hist_index, draft,
                                    browsing_history);
             continue;
         }
@@ -226,7 +226,7 @@ InputResult read_command_line(std::vector<std::string> &hist,
             const char *clear = "\033[2J\033[H";
             write(STDOUT_FILENO, clear, 7);
 
-            std::string prompt = shell::prompt::build_prompt();
+            std::string prompt = shell::prompt::build_prompt(state);
 
             write(STDOUT_FILENO, prompt.c_str(), prompt.size());
             write(STDOUT_FILENO, buf.c_str(), buf.size());
@@ -242,7 +242,7 @@ InputResult read_command_line(std::vector<std::string> &hist,
         }
 
         if (ch == '\t') {
-            features::handle_tab_completion(buf, cursor);
+            features::handle_tab_completion(state, buf, cursor);
             continue;
         }
 
@@ -250,7 +250,7 @@ InputResult read_command_line(std::vector<std::string> &hist,
             if (cursor > 0) {
                 if (browsing_history) {
                     browsing_history = false;
-                    hist_index = hist.size();
+                    hist_index = state.history.size();
                 }
 
                 buf.erase(cursor - 1, 1);
@@ -263,7 +263,7 @@ InputResult read_command_line(std::vector<std::string> &hist,
         // normal character insert
         if (browsing_history) {
             browsing_history = false;
-            hist_index = hist.size();
+            hist_index = state.history.size();
         }
 
         buf.insert(cursor, 1, ch);

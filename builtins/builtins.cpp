@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "./alias/alias.hpp"
+#include "./env/env.hpp"
 
 namespace builtins {
 namespace {
@@ -30,10 +31,11 @@ int run_exit(shell::ShellState &state, const parser::Command &cmd) {
     return status;
 }
 
-int run_cd(const parser::Command &cmd) {
+int run_cd(const shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() == 1) {
-        if (getenv("HOME")) {
-            if (chdir(getenv("HOME")) == 0) {
+        const shell::ShellVariable *home = env::find_variable(state, "HOME");
+        if (home != nullptr) {
+            if (chdir(home->value.c_str()) == 0) {
                 return 0;
             }
             perror("cd");
@@ -150,6 +152,16 @@ BuiltinKind classify_builtin(const parser::Command &cmd) {
     if (first == "unalias") {
         return BuiltinKind::AliasSet;
     }
+    if (first == "set") {
+        return BuiltinKind::SetList;
+    }
+    if (first == "export") {
+        return (cmd.args.size() == 1) ? BuiltinKind::ExportList
+                                      : BuiltinKind::ExportSet;
+    }
+    if (first == "unset") {
+        return BuiltinKind::ExportSet;
+    }
 
     return BuiltinKind::None;
 }
@@ -164,7 +176,8 @@ BuiltinDecision decide_builtin(BuiltinKind kind, ExecContext ctx) {
     }
 
     if (kind == BuiltinKind::History || kind == BuiltinKind::Ps ||
-        kind == BuiltinKind::AliasList) {
+        kind == BuiltinKind::AliasList || kind == BuiltinKind::SetList ||
+        kind == BuiltinKind::ExportList) {
         return BuiltinDecision::RunInChild;
     }
 
@@ -184,7 +197,7 @@ int run_builtin(shell::ShellState &state, const parser::Command &cmd,
     case BuiltinKind::Exit:
         return run_exit(state, cmd);
     case BuiltinKind::Cd:
-        return run_cd(cmd);
+        return run_cd(state, cmd);
     case BuiltinKind::History:
         return run_history(state, cmd);
     case BuiltinKind::Ps:
@@ -195,6 +208,12 @@ int run_builtin(shell::ShellState &state, const parser::Command &cmd,
         return run_alias_manage(state, cmd);
     case BuiltinKind::AliasList:
         return run_alias_list(state, cmd);
+    case BuiltinKind::SetList:
+        return env::run_set_list(state, cmd);
+    case BuiltinKind::ExportSet:
+        return env::run_export_manage(state, cmd);
+    case BuiltinKind::ExportList:
+        return env::run_export_list(state, cmd);
     case BuiltinKind::None:
         return -1;
     }

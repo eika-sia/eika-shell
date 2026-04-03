@@ -5,6 +5,8 @@
 #include <unistd.h>
 
 #include "../builtins/builtins.hpp"
+#include "../builtins/env/env.hpp"
+#include "../builtins/env/envexec/envexec.hpp"
 #include "../features/expansion/expansion.hpp"
 #include "../features/history/history.hpp"
 #include "../parser/parser.hpp"
@@ -29,7 +31,7 @@ bool should_execute_pipeline(parser::RunCondition condition,
     return true;
 }
 
-int execute_pipeline(ShellState &state, parser::Pipeline &pipe) {
+int dispatch_pipeline(ShellState &state, parser::Pipeline &pipe) {
     for (parser::Command &cmd : pipe.commands) {
         if (!features::expand_command(state, cmd)) {
             return 1;
@@ -40,6 +42,12 @@ int execute_pipeline(ShellState &state, parser::Pipeline &pipe) {
 
     if (pipe.commands.size() == 1) {
         const parser::Command &cmd = pipe.commands[0];
+
+        if (cmd.args.empty() && !cmd.assignments.empty()) {
+            builtins::env::apply_persistent_assignments(state, cmd.assignments);
+            return 0;
+        }
+
         const builtins::ExecContext ctx =
             pipe.background ? builtins::ExecContext::BackgroundStandalone
                             : builtins::ExecContext::ForegroundStandalone;
@@ -57,7 +65,7 @@ int execute_pipeline(ShellState &state, parser::Pipeline &pipe) {
         }
     }
 
-    return exec::launch_pipeline(state, pipe);
+    return exec::run_pipeline(state, pipe);
 }
 
 } // namespace
@@ -66,6 +74,7 @@ void init_shell(ShellState &state) {
     state.shell_pgid = getpgrp();
     terminal::init_terminal(state);
     signals::install_signal_handlers();
+    builtins::env::import_process_environment(state);
 }
 
 std::string trim(const std::string &source) {
@@ -110,7 +119,7 @@ void execute_command_line(ShellState &state, std::string line) {
                 continue;
             }
 
-            chain_status = execute_pipeline(state, pipe);
+            chain_status = dispatch_pipeline(state, pipe);
             state.last_status = chain_status;
             executed_any_pipeline = true;
             if (!state.running) {

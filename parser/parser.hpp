@@ -13,9 +13,15 @@ enum class RunCondition {
     IfPreviousFailed,
 };
 
+struct Assignment {
+    std::string name;
+    std::string value;
+};
+
 struct Command {
     std::string raw;
     std::vector<std::string> args;
+    std::vector<Assignment> assignments;
     bool background = false;
 
     std::string input_file = "";

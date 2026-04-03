@@ -13,12 +13,11 @@ int main() {
         process::cleanup_finished_processes(state);
 
         if (state.interactive) {
-            std::cout << shell::prompt::build_prompt();
+            std::cout << shell::prompt::build_prompt(state);
             std::cout.flush();
         }
 
-        shell::input::InputResult input =
-            shell::input::read_command_line(state.history, state.interactive);
+        shell::input::InputResult input = shell::input::read_command_line(state);
 
         if (input.interrupted) {
             continue;

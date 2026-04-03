@@ -1,7 +1,6 @@
 #include "path_completion.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <dirent.h>
 #include <set>
 #include <string>
@@ -9,20 +8,23 @@
 #include <unistd.h>
 #include <vector>
 
+#include "../../builtins/env/env.hpp"
+
 namespace features {
 namespace {
 
-std::string expand_tilde_prefix(const std::string &token) {
+std::string expand_tilde_prefix(const shell::ShellState &state,
+                                const std::string &token) {
     if (token.empty() || token[0] != '~') {
         return token;
     }
 
-    const char *home = getenv("HOME");
+    const shell::ShellVariable *home = builtins::env::find_variable(state, "HOME");
     if (!home) {
         return token;
     }
 
-    return std::string(home) + token.substr(1);
+    return home->value + token.substr(1);
 }
 
 std::string get_directory_part(const std::string &token) {
@@ -97,13 +99,14 @@ bool looks_like_path_token(const std::string &token) {
     return token.find('/') != std::string::npos;
 }
 
-std::vector<std::string> complete_path_token(const std::string &token) {
+std::vector<std::string> complete_path_token(const shell::ShellState &state,
+                                             const std::string &token) {
     std::vector<std::string> results;
 
     std::string dir_part = get_directory_part(token);
     std::string base_part = get_basename_part(token);
 
-    std::string expanded_dir = expand_tilde_prefix(dir_part);
+    std::string expanded_dir = expand_tilde_prefix(state, dir_part);
     std::vector<std::string> names =
         list_directory_matches(expanded_dir, base_part);
 
@@ -137,15 +140,15 @@ std::vector<std::string> complete_path_token(const std::string &token) {
     return results;
 }
 
-std::vector<std::string> complete_command_token(const std::string &token) {
+std::vector<std::string> complete_command_token(const shell::ShellState &state,
+                                                const std::string &token) {
     std::set<std::string> unique_matches;
 
-    const char *path_env = getenv("PATH");
-    if (!path_env) {
+    const std::string path_str = builtins::env::get_variable_value(state, "PATH");
+    if (path_str.empty()) {
         return {};
     }
 
-    std::string path_str(path_env);
     size_t start = 0;
 
     while (start <= path_str.size()) {

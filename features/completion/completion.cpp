@@ -82,10 +82,11 @@ std::string longest_common_prefix(const std::vector<std::string> &matches) {
     return prefix;
 }
 
-void redraw_line(const std::string &buf, size_t cursor, bool full) {
+void redraw_line(const shell::ShellState &state, const std::string &buf,
+                 size_t cursor, bool full) {
     std::string prefix;
     if (full)
-        prefix = shell::prompt::build_prompt();
+        prefix = shell::prompt::build_prompt(state);
     else
         prefix = shell::prompt::build_prompt_prefix();
 
@@ -114,7 +115,8 @@ void print_completion_candidates(const std::vector<std::string> &matches) {
 
 } // namespace
 
-void handle_tab_completion(std::string &buf, size_t &cursor) {
+void handle_tab_completion(const shell::ShellState &state, std::string &buf,
+                           size_t &cursor) {
     size_t token_start = get_current_token_start(buf, cursor);
     size_t token_end = get_current_token_end(buf, cursor);
 
@@ -122,11 +124,11 @@ void handle_tab_completion(std::string &buf, size_t &cursor) {
 
     std::vector<std::string> matches;
     if (features::looks_like_path_token(token)) {
-        matches = features::complete_path_token(token);
+        matches = features::complete_path_token(state, token);
     } else if (is_command_position(buf, cursor)) {
-        matches = features::complete_command_token(token);
+        matches = features::complete_command_token(state, token);
     } else {
-        matches = features::complete_path_token(token);
+        matches = features::complete_path_token(state, token);
     }
 
     if (matches.empty()) {
@@ -138,7 +140,7 @@ void handle_tab_completion(std::string &buf, size_t &cursor) {
     if (matches.size() == 1) {
         buf.replace(token_start, token_end - token_start, matches[0] + " ");
         cursor = token_start + matches[0].size() + 1;
-        redraw_line(buf, cursor, false);
+        redraw_line(state, buf, cursor, false);
         return;
     }
 
@@ -146,12 +148,12 @@ void handle_tab_completion(std::string &buf, size_t &cursor) {
     if (lcp.size() > token.size()) {
         buf.replace(token_start, token_end - token_start, lcp);
         cursor = token_start + lcp.size();
-        redraw_line(buf, cursor, false);
+        redraw_line(state, buf, cursor, false);
         return;
     }
 
     print_completion_candidates(matches);
-    redraw_line(buf, cursor, true);
+    redraw_line(state, buf, cursor, true);
 }
 
 } // namespace features

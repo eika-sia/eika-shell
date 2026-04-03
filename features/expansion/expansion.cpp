@@ -5,8 +5,8 @@
 #include <vector>
 
 #include "../../builtins/alias/alias.hpp"
+#include "../../builtins/env/env.hpp"
 #include "../../shell/shell.hpp"
-#include "../env/env.hpp"
 #include "../shell_text/shell_text.hpp"
 
 namespace features {
@@ -35,8 +35,10 @@ bool can_expand_tilde_at(const std::string &line, size_t i) {
     return next == '/' || is_word_separator(next);
 }
 
-std::string expand_tilde(const std::string &line) {
-    const char *home = std::getenv("HOME");
+std::string expand_tilde(const shell::ShellState &state,
+                         const std::string &line) {
+    const shell::ShellVariable *home =
+        builtins::env::find_variable(state, "HOME");
     if (home == nullptr) {
         return line;
     }
@@ -49,7 +51,8 @@ std::string expand_tilde(const std::string &line) {
                 return true;
             }
 
-            replacements.push_back(shell_text::Replacement{i, i + 1, home});
+            replacements.push_back(
+                shell_text::Replacement{i, i + 1, home->value});
             return true;
         });
 
@@ -69,12 +72,11 @@ bool expand_command(shell::ShellState &state, parser::Command &cmd) {
     }
 
     if (!reparse_command(cmd,
-                         features::expand_environment_variables(state,
-                                                               cmd.raw))) {
+                         builtins::env::expand_variables(state, cmd.raw))) {
         return false;
     }
 
-    return reparse_command(cmd, expand_tilde(cmd.raw));
+    return reparse_command(cmd, expand_tilde(state, cmd.raw));
 }
 
 } // namespace features

@@ -1,7 +1,10 @@
 #pragma once
 
 #include <string>
-#include <vector>
+
+namespace shell {
+struct ShellState;
+}
 
 namespace shell::input {
 
@@ -11,7 +14,6 @@ struct InputResult {
     bool interrupted = false;
 };
 
-InputResult read_command_line(std::vector<std::string> &history,
-                              bool interactive);
+InputResult read_command_line(shell::ShellState &state);
 
 } // namespace shell::input

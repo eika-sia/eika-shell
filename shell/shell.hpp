@@ -10,6 +10,11 @@
 
 namespace shell {
 
+struct ShellVariable {
+    std::string value;
+    bool exported = false;
+};
+
 struct ShellState {
     std::vector<std::string> history;
     std::vector<process::ProcessInfo> processes;
@@ -23,6 +28,7 @@ struct ShellState {
     int last_status = 0;
 
     std::unordered_map<std::string, std::string> alias;
+    std::unordered_map<std::string, ShellVariable> variables;
 };
 
 void init_shell(ShellState &state);
