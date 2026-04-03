@@ -234,4 +234,10 @@ int run_builtin(shell::ShellState &state, const parser::Command &cmd,
     return -1;
 }
 
+bool is_builtin_name(const std::string &name) {
+    parser::Command fake_cmd{};
+    fake_cmd.args.push_back(name);
+    return classify_builtin(fake_cmd) != BuiltinKind::None;
+}
+
 } // namespace builtins

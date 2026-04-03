@@ -1,4 +1,4 @@
-#include "internal.hpp"
+#include "tokenize.hpp"
 
 #include <iostream>
 #include <string>
@@ -28,7 +28,8 @@ bool is_redirect(TokenKind kind) {
            kind == TokenKind::AppendRedirect;
 }
 
-bool tokenize_line(const std::string &line, std::vector<Token> &tokens) {
+TokenizeResult tokenize_line(const std::string &line,
+                             std::vector<Token> &tokens, TokenizeMode mode) {
     std::string current;
     size_t current_start = std::string::npos;
     size_t current_end = std::string::npos;
@@ -139,13 +140,17 @@ bool tokenize_line(const std::string &line, std::vector<Token> &tokens) {
         current_end = line.size();
     }
 
-    if (in_single_quote || in_double_quote) {
-        std::cerr << "syntax error: unmatched quote\n";
-        return false;
+    if ((in_single_quote || in_double_quote)) {
+        if (mode == TokenizeMode::Strict) {
+            std::cerr << "syntax error: unmatched quote\n";
+        } else {
+            flush_word(tokens, current, current_start, current_end);
+        }
+        return TokenizeResult{false, in_single_quote, in_double_quote};
     }
 
     flush_word(tokens, current, current_start, current_end);
-    return true;
+    return TokenizeResult{};
 }
 
 } // namespace parser

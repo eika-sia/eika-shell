@@ -1,4 +1,5 @@
 #include "internals/internal.hpp"
+#include "internals/tokenize.hpp"
 
 #include <initializer_list>
 #include <iostream>
@@ -17,7 +18,7 @@ bool tokenize_work_line(const std::string &line, std::string &work,
         return false;
     }
 
-    if (!tokenize_line(work, tokens)) {
+    if (!tokenize_line(work, tokens).ok) {
         return false;
     }
 

@@ -104,8 +104,7 @@ void handle_escape_sequence(const shell::ShellState &state, std::string &buf,
     case 'C': { // Right
         if (cursor < buf.size()) {
             cursor++;
-            const char *move = "\033[1C";
-            write(STDOUT_FILENO, move, 4);
+            shell::prompt::redraw_input_line(state, buf, cursor, false);
         }
         break;
     }
@@ -113,8 +112,7 @@ void handle_escape_sequence(const shell::ShellState &state, std::string &buf,
     case 'D': { // Left
         if (cursor > 0) {
             cursor--;
-            const char *move = "\033[1D";
-            write(STDOUT_FILENO, move, 4);
+            shell::prompt::redraw_input_line(state, buf, cursor, false);
         }
         break;
     }
@@ -174,6 +172,7 @@ InputResult read_command_line(shell::ShellState &state) {
 
         if (n < 0) {
             if (errno == EINTR) {
+                shell::prompt::finalize_interrupted_input_line();
                 result.interrupted = true;
                 break;
             }
@@ -193,37 +192,23 @@ InputResult read_command_line(shell::ShellState &state) {
 
         if (ch == 1) { // Ctrl+A
             if (cursor > 0) {
-                std::string move = "\033[" + std::to_string(cursor) + "D";
-                write(STDOUT_FILENO, move.c_str(), move.size());
                 cursor = 0;
+                shell::prompt::redraw_input_line(state, buf, cursor, false);
             }
             continue;
         }
         if (ch == 5) { // Ctrl+E
             size_t right = buf.size() - cursor;
             if (right > 0) {
-                std::string move = "\033[" + std::to_string(right) + "C";
-                write(STDOUT_FILENO, move.c_str(), move.size());
                 cursor = buf.size();
+                shell::prompt::redraw_input_line(state, buf, cursor, false);
             }
             continue;
         }
         if (ch == 12) { // Ctrl+L
             const char *clear = "\033[2J\033[H";
             write(STDOUT_FILENO, clear, 7);
-
-            std::string prompt = shell::prompt::build_prompt(state);
-
-            write(STDOUT_FILENO, prompt.c_str(), prompt.size());
-            write(STDOUT_FILENO, buf.c_str(), buf.size());
-
-            size_t right_edge = buf.size();
-            if (right_edge > cursor) {
-                std::string move =
-                    "\033[" + std::to_string(right_edge - cursor) + "D";
-                write(STDOUT_FILENO, move.c_str(), move.size());
-            }
-
+            shell::prompt::redraw_input_line(state, buf, cursor, true);
             continue;
         }
 

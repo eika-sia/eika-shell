@@ -34,4 +34,6 @@ BuiltinPlan plan_builtin(const parser::Command &cmd, ExecContext ctx);
 int run_builtin(shell::ShellState &state, const parser::Command &cmd,
                 BuiltinKind kind);
 
+bool is_builtin_name(const std::string &name);
+
 } // namespace builtins

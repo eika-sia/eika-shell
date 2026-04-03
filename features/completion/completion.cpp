@@ -1,8 +1,8 @@
 #include "completion.hpp"
 #include "path_completion.hpp"
 
-#include "../shell_text/shell_text.hpp"
 #include "../../shell/prompt/prompt.hpp"
+#include "../shell_text/shell_text.hpp"
 
 #include <algorithm>
 #include <string>
@@ -41,8 +41,7 @@ size_t get_current_token_end(const std::string &buf, size_t cursor) {
 bool is_command_position(const std::string &buf, size_t cursor) {
     size_t start = get_current_token_start(buf, cursor);
 
-    while (start > 0 &&
-           (buf[start - 1] == ' ' || buf[start - 1] == '\t')) {
+    while (start > 0 && (buf[start - 1] == ' ' || buf[start - 1] == '\t')) {
         --start;
     }
 
@@ -112,8 +111,8 @@ void handle_tab_completion(const shell::ShellState &state, std::string &buf,
     std::sort(matches.begin(), matches.end());
 
     if (matches.size() == 1) {
-        buf.replace(token_start, token_end - token_start, matches[0] + " ");
-        cursor = token_start + matches[0].size() + 1;
+        buf.replace(token_start, token_end - token_start, matches[0]);
+        cursor = token_start + matches[0].size();
         shell::prompt::redraw_input_line(state, buf, cursor, false);
         return;
     }
