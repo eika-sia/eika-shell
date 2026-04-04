@@ -5,6 +5,7 @@
 #include <iostream>
 #include <signal.h>
 #include <unistd.h>
+#include <unordered_map>
 
 #include "../../builtins/builtins.hpp"
 #include "../../builtins/env/envexec/envexec.hpp"
@@ -19,6 +20,13 @@ struct SavedStdio {
     int stdout_fd = -1;
 };
 
+struct EnvironmentBlock {
+    std::vector<std::string> storage;
+    std::vector<char *> envp;
+    std::string path_override;
+    bool has_path_override = false;
+};
+
 std::vector<char *> build_argv(const std::vector<std::string> &args) {
     std::vector<char *> argv;
     argv.reserve(args.size() + 1);
@@ -29,6 +37,42 @@ std::vector<char *> build_argv(const std::vector<std::string> &args) {
 
     argv.push_back(nullptr);
     return argv;
+}
+
+EnvironmentBlock
+build_envp(const ShellState &state,
+           const std::vector<parser::Assignment> &assignments) {
+    std::unordered_map<std::string, std::string> env_map;
+    env_map.reserve(state.variables.size() + assignments.size());
+
+    for (const auto &[name, variable] : state.variables) {
+        if (variable.exported) {
+            env_map[name] = variable.value;
+        }
+    }
+
+    EnvironmentBlock block{};
+    for (const parser::Assignment &assignment : assignments) {
+        env_map[assignment.name] = assignment.value;
+        if (assignment.name == "PATH") {
+            block.path_override = assignment.value;
+            block.has_path_override = true;
+        }
+    }
+
+    block.storage.reserve(env_map.size());
+    block.envp.reserve(env_map.size() + 1);
+
+    for (const auto &[name, value] : env_map) {
+        block.storage.push_back(name + "=" + value);
+    }
+
+    for (std::string &entry : block.storage) {
+        block.envp.push_back(const_cast<char *>(entry.c_str()));
+    }
+    block.envp.push_back(nullptr);
+
+    return block;
 }
 
 bool apply_redirections(const parser::Command &cmd) {
@@ -168,11 +212,6 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
                 _exit(1);
             }
 
-            if (!cmd.assignments.empty()) {
-                builtins::env::apply_temporary_assignments(state,
-                                                           cmd.assignments);
-            }
-
             // builtin pipelining
             builtins::ExecContext ctx =
                 (n > 1) ? builtins::ExecContext::PipelineStage
@@ -182,6 +221,10 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
             builtins::BuiltinPlan plan = builtins::plan_builtin(cmd, ctx);
 
             if (plan.decision == builtins::BuiltinDecision::RunInChild) {
+                if (!cmd.assignments.empty()) {
+                    builtins::env::apply_temporary_assignments(state,
+                                                               cmd.assignments);
+                }
                 int status = builtins::run_builtin(state, cmd, plan.kind);
                 std::cout.flush();
                 std::cerr.flush();
@@ -202,9 +245,16 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
             }
 
             // regular child exec
+            EnvironmentBlock env = build_envp(state, cmd.assignments);
+            if (env.has_path_override &&
+                setenv("PATH", env.path_override.c_str(), 1) == -1) {
+                perror("setenv PATH");
+                _exit(1);
+            }
+
             std::vector<char *> argv = build_argv(cmd.args);
-            execvp(argv[0], argv.data());
-            perror("execvp");
+            execvpe(argv[0], argv.data(), env.envp.data());
+            perror("execvpe");
             _exit(1);
         }
 
