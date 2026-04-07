@@ -20,7 +20,7 @@ void import_process_environment(shell::ShellState &state);
 std::string expand_variables(const shell::ShellState &state,
                              const std::string &line);
 
-int run_set_list(shell::ShellState &state, const parser::Command &cmd);
-int run_export_manage(shell::ShellState &state, const parser::Command &cmd);
-int run_export_list(shell::ShellState &state, const parser::Command &cmd);
+int run_set(shell::ShellState &state, const parser::Command &cmd);
+int run_export(shell::ShellState &state, const parser::Command &cmd);
+int run_unset(shell::ShellState &state, const parser::Command &cmd);
 } // namespace builtins::env

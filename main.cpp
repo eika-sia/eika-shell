@@ -1,33 +1,10 @@
-#include <fstream>
-#include <iostream>
-#include <string>
-
 #include "features/history/history.hpp"
 #include "shell/input/input.hpp"
 #include "shell/prompt/prompt.hpp"
 #include "shell/shell.hpp"
-
-namespace {
-
-void run_line(shell::ShellState &state, const std::string &line) {
-    if (shell::trim(line).empty()) {
-        return;
-    }
-
-    shell::execute_command_line(state, line);
-    process::cleanup_finished_processes(state);
-}
-
-int run_stream(shell::ShellState &state, std::istream &stream) {
-    std::string line;
-    while (state.running && std::getline(stream, line)) {
-        run_line(state, line);
-    }
-
-    return state.last_status;
-}
-
-} // namespace
+#include <fstream>
+#include <iostream>
+#include <string>
 
 int main(int argc, char **argv) {
     shell::ShellState state;
@@ -35,6 +12,8 @@ int main(int argc, char **argv) {
 
     if (argc > 1) {
         const std::string first_arg = argv[1];
+        shell::ExecuteOptions options{};
+        options.save_history = false;
 
         if (first_arg == "-c") {
             if (argc != 3) {
@@ -42,7 +21,8 @@ int main(int argc, char **argv) {
                 return 2;
             }
 
-            run_line(state, argv[2]);
+            shell::execute_command_line(state, argv[2], options);
+            process::cleanup_finished_processes(state);
             features::save_shell_history(state);
             return state.last_status;
         }
@@ -60,7 +40,7 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        const int status = run_stream(state, script);
+        const int status = shell::execute_stream(state, script, options);
         features::save_shell_history(state);
         return status;
     }
@@ -73,7 +53,8 @@ int main(int argc, char **argv) {
             std::cout.flush();
         }
 
-        shell::input::InputResult input = shell::input::read_command_line(state);
+        shell::input::InputResult input =
+            shell::input::read_command_line(state);
 
         if (input.interrupted) {
             continue;
@@ -85,7 +66,8 @@ int main(int argc, char **argv) {
             break;
         }
 
-        run_line(state, input.line);
+        shell::execute_command_line(state, input.line);
+        process::cleanup_finished_processes(state);
     }
 
     features::save_shell_history(state);

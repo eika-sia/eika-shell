@@ -1,11 +1,13 @@
 #include "builtins.hpp"
 
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <signal.h>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 
 #include "../features/completion/path_completion.hpp"
@@ -15,15 +17,55 @@
 namespace builtins {
 namespace {
 
-void update_pwd(shell::ShellState &state) {
+using BuiltinFn = int (*)(shell::ShellState &, const parser::Command &);
+
+struct BuiltinSpec {
+    std::string_view name;
+    BuiltinKind kind;
+    BuiltinFn run;
+    std::string_view summary;
+};
+
+std::string get_current_working_directory() {
     char *cwd = getcwd(nullptr, 0);
     if (cwd == nullptr) {
         perror("getcwd");
-        return;
+        return "";
     }
 
-    env::set_shell_variable(state, "PWD", cwd);
+    std::string path = cwd;
     free(cwd);
+    return path;
+}
+
+std::string get_shell_pwd(const shell::ShellState &state) {
+    if (const shell::ShellVariable *pwd = env::find_variable(state, "PWD")) {
+        if (!pwd->value.empty()) {
+            return pwd->value;
+        }
+    }
+
+    return get_current_working_directory();
+}
+
+void set_local_shell_variable(shell::ShellState &state, std::string name,
+                              std::string value) {
+    state.variables[name] = shell::ShellVariable{value, false};
+}
+
+bool update_directory_variables(shell::ShellState &state,
+                                const std::string &old_pwd) {
+    if (!old_pwd.empty()) {
+        set_local_shell_variable(state, "OLDPWD", old_pwd);
+    }
+
+    const std::string new_pwd = get_current_working_directory();
+    if (new_pwd.empty()) {
+        return false;
+    }
+
+    env::set_shell_variable(state, "PWD", new_pwd);
+    return true;
 }
 
 int run_exit(shell::ShellState &state, const parser::Command &cmd) {
@@ -45,53 +87,64 @@ int run_exit(shell::ShellState &state, const parser::Command &cmd) {
 }
 
 int run_cd(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() == 1) {
-        const shell::ShellVariable *home = env::find_variable(state, "HOME");
-        if (home != nullptr) {
-            if (chdir(home->value.c_str()) == 0) {
-                update_pwd(state);
-                return 0;
-            }
-            perror("cd");
-        } else {
-            std::cerr << "cd: only 1 argument provided and HOME is not set\n";
-        }
-        return 1;
-    }
-
     if (cmd.args.size() > 2) {
         std::cerr << "cd: too many arguments\n";
         return 1;
     }
 
-    if (chdir(cmd.args[1].c_str()) == 0) {
-        update_pwd(state);
-        return 0;
+    std::string target;
+    bool print_new_pwd = false;
+
+    if (cmd.args.size() == 1) {
+        const shell::ShellVariable *home = env::find_variable(state, "HOME");
+        if (home == nullptr || home->value.empty()) {
+            std::cerr << "cd: only 1 argument provided and HOME is not set\n";
+            return 1;
+        }
+        target = home->value;
+    } else if (cmd.args[1] == "-") {
+        const shell::ShellVariable *oldpwd =
+            env::find_variable(state, "OLDPWD");
+        if (oldpwd == nullptr || oldpwd->value.empty()) {
+            std::cerr << "cd: OLDPWD not set\n";
+            return 1;
+        }
+
+        target = oldpwd->value;
+        print_new_pwd = true;
+    } else {
+        target = cmd.args[1];
     }
 
-    perror("cd");
-    return 1;
+    const std::string old_pwd = get_shell_pwd(state);
+    if (chdir(target.c_str()) == -1) {
+        perror("cd");
+        return 1;
+    }
+
+    if (!update_directory_variables(state, old_pwd)) {
+        return 1;
+    }
+
+    if (print_new_pwd) {
+        std::cout << env::get_variable_value(state, "PWD") << std::endl;
+    }
+
+    return 0;
 }
 
-int run_pwd(const shell::ShellState &state, const parser::Command &cmd) {
+int run_pwd(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() != 1) {
         std::cerr << "pwd: unexpected arguments\n";
         return 1;
     }
 
-    if (const shell::ShellVariable *pwd = env::find_variable(state, "PWD")) {
-        std::cout << pwd->value << std::endl;
-        return 0;
-    }
-
-    char *cwd = getcwd(nullptr, 0);
-    if (cwd == nullptr) {
-        perror("getcwd");
+    const std::string pwd = get_shell_pwd(state);
+    if (pwd.empty()) {
         return 1;
     }
 
-    std::cout << cwd << std::endl;
-    free(cwd);
+    std::cout << pwd << std::endl;
     return 0;
 }
 
@@ -122,7 +175,7 @@ std::string describe_command_type(const shell::ShellState &state,
     return "";
 }
 
-int run_type(const shell::ShellState &state, const parser::Command &cmd) {
+int run_type(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() < 2) {
         std::cerr << "type: unexpected arguments\n";
         return 1;
@@ -144,26 +197,7 @@ int run_type(const shell::ShellState &state, const parser::Command &cmd) {
     return status;
 }
 
-int source_file_impl(shell::ShellState &state, const std::string &path,
-                     bool silent_missing) {
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        if (!silent_missing) {
-            perror(path.c_str());
-        }
-        return 1;
-    }
-
-    std::string line;
-    while (std::getline(file, line)) {
-        shell::execute_command_line(state, line);
-        if (!state.running) {
-            break;
-        }
-    }
-
-    return state.last_status;
-}
+int run_help(shell::ShellState &, const parser::Command &cmd);
 
 int run_source(shell::ShellState &state, const parser::Command &cmd) {
     if (cmd.args.size() != 2) {
@@ -171,16 +205,40 @@ int run_source(shell::ShellState &state, const parser::Command &cmd) {
         return 1;
     }
 
-    return source_file_impl(state, cmd.args[1], false);
+    return source_file(state, cmd.args[1], false);
 }
 
 int run_history(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() != 1) {
+    if (cmd.args.size() > 2) {
         std::cerr << "history: unexpected arguments\n";
         return 1;
     }
 
-    for (size_t i = 0; i < state.history.size(); ++i) {
+    size_t start = 0;
+    if (cmd.args.size() == 2) {
+        int count = 0;
+        try {
+            count = std::stoi(cmd.args[1]);
+        } catch (const std::invalid_argument &) {
+            std::cerr << "history: invalid argument" << std::endl;
+            return 1;
+        } catch (const std::out_of_range &) {
+            std::cerr << "history: number out of range" << std::endl;
+            return 1;
+        }
+
+        if (count < 0) {
+            std::cerr << "history: invalid argument" << std::endl;
+            return 1;
+        }
+
+        const size_t limit = static_cast<size_t>(count);
+        if (limit < state.history.size()) {
+            start = state.history.size() - limit;
+        }
+    }
+
+    for (size_t i = start; i < state.history.size(); ++i) {
         std::cout << i + 1 << " " << state.history[i] << std::endl;
     }
     return 0;
@@ -208,10 +266,10 @@ int run_kill(shell::ShellState &state, const parser::Command &cmd) {
         return 1;
     }
 
-    int signal = 0;
+    int signal_number = 0;
     pid_t pid = 0;
     try {
-        signal = std::stoi(cmd.args[2]);
+        signal_number = std::stoi(cmd.args[2]);
         pid = std::stoi(cmd.args[1]);
     } catch (const std::invalid_argument &) {
         std::cerr << "kill: invalid argument" << std::endl;
@@ -222,7 +280,7 @@ int run_kill(shell::ShellState &state, const parser::Command &cmd) {
     }
 
     const process::ProcessInfo *proc = process::find_process(state, pid);
-    if (!proc) {
+    if (proc == nullptr) {
         std::cerr << "kill: process with PID " << pid << " not found\n";
         return 1;
     }
@@ -232,7 +290,7 @@ int run_kill(shell::ShellState &state, const parser::Command &cmd) {
         return 1;
     }
 
-    if (kill(pid, signal) == -1) {
+    if (kill(pid, signal_number) == -1) {
         perror("kill");
         return 1;
     }
@@ -240,128 +298,151 @@ int run_kill(shell::ShellState &state, const parser::Command &cmd) {
     return 0;
 }
 
-BuiltinKind classify_builtin(const parser::Command &cmd) {
-    if (cmd.args.empty()) {
-        return BuiltinKind::None;
-    }
-
-    const std::string &first = cmd.args[0];
-    if (first == "exit") {
-        return BuiltinKind::Exit;
-    }
-    if (first == "cd") {
-        return BuiltinKind::Cd;
-    }
-    if (first == "pwd") {
-        return BuiltinKind::Pwd;
-    }
-    if (first == "type") {
-        return BuiltinKind::Type;
-    }
-    if (first == "source") {
-        return BuiltinKind::Source;
-    }
-    if (first == "history") {
-        return BuiltinKind::History;
-    }
-    if (first == "ps") {
-        return BuiltinKind::Ps;
-    }
-    if (first == "kill") {
-        return BuiltinKind::Kill;
-    }
-    if (first == "alias") {
-        return (cmd.args.size() == 1) ? BuiltinKind::AliasList
-                                      : BuiltinKind::AliasManage;
-    }
-    if (first == "unalias") {
-        return BuiltinKind::AliasManage;
-    }
-    if (first == "set") {
-        return BuiltinKind::SetList;
-    }
-    if (first == "export") {
-        return (cmd.args.size() == 1) ? BuiltinKind::ExportList
-                                      : BuiltinKind::ExportManage;
-    }
-    if (first == "unset") {
-        return BuiltinKind::ExportManage;
-    }
-
-    return BuiltinKind::None;
+int run_alias(shell::ShellState &state, const parser::Command &cmd) {
+    return (cmd.args.size() == 1) ? run_alias_list(state, cmd)
+                                  : run_alias_manage(state, cmd);
 }
 
-BuiltinDecision decide_builtin(BuiltinKind kind, ExecContext ctx) {
-    if (kind == BuiltinKind::None) {
-        return BuiltinDecision::External;
+int run_unalias(shell::ShellState &state, const parser::Command &cmd) {
+    return run_alias_manage(state, cmd);
+}
+
+const std::array<BuiltinSpec, 14> &builtin_specs() {
+    static const std::array<BuiltinSpec, 14> specs{{
+        {"exit", BuiltinKind::Exit, run_exit, "exit the shell"},
+        {"cd", BuiltinKind::Cd, run_cd, "change the working directory"},
+        {"pwd", BuiltinKind::Pwd, run_pwd, "print the working directory"},
+        {"type", BuiltinKind::Type, run_type, "describe how commands resolve"},
+        {"help", BuiltinKind::Help, run_help, "show builtin help"},
+        {"source", BuiltinKind::Source, run_source, "run commands from a file"},
+        {"history", BuiltinKind::History, run_history, "show command history"},
+        {"ps", BuiltinKind::Ps, run_ps, "show tracked processes"},
+        {"kill", BuiltinKind::Kill, run_kill,
+         "send a signal to a tracked process"},
+        {"alias", BuiltinKind::Alias, run_alias, "list or create aliases"},
+        {"unalias", BuiltinKind::Unalias, run_unalias, "remove an alias"},
+        {"set", BuiltinKind::Set, env::run_set, "list shell variables"},
+        {"export", BuiltinKind::Export, env::run_export,
+         "list or export variables"},
+        {"unset", BuiltinKind::Unset, env::run_unset, "remove shell variables"},
+    }};
+
+    return specs;
+}
+
+const BuiltinSpec *find_builtin_spec(std::string_view name) {
+    for (const BuiltinSpec &spec : builtin_specs()) {
+        if (spec.name == name) {
+            return &spec;
+        }
     }
 
-    if (ctx == ExecContext::ForegroundStandalone) {
-        return BuiltinDecision::RunInParent;
+    return nullptr;
+}
+
+const BuiltinSpec *find_builtin_spec(BuiltinKind kind) {
+    for (const BuiltinSpec &spec : builtin_specs()) {
+        if (spec.kind == kind) {
+            return &spec;
+        }
     }
 
-    if (kind == BuiltinKind::Pwd || kind == BuiltinKind::Type ||
-        kind == BuiltinKind::History || kind == BuiltinKind::Ps ||
-        kind == BuiltinKind::AliasList || kind == BuiltinKind::SetList ||
-        kind == BuiltinKind::ExportList) {
-        return BuiltinDecision::RunInChild;
+    return nullptr;
+}
+
+bool can_run_builtin_in_child(const parser::Command &cmd, BuiltinKind kind) {
+    switch (kind) {
+    case BuiltinKind::Pwd:
+    case BuiltinKind::Type:
+    case BuiltinKind::Help:
+    case BuiltinKind::History:
+    case BuiltinKind::Ps:
+    case BuiltinKind::Set:
+        return true;
+    case BuiltinKind::Alias:
+    case BuiltinKind::Export:
+        return cmd.args.size() == 1;
+    case BuiltinKind::None:
+    case BuiltinKind::Exit:
+    case BuiltinKind::Cd:
+    case BuiltinKind::Source:
+    case BuiltinKind::Kill:
+    case BuiltinKind::Unalias:
+    case BuiltinKind::Unset:
+        return false;
     }
 
-    return BuiltinDecision::Reject;
+    return false;
+}
+
+int run_help(shell::ShellState &, const parser::Command &cmd) {
+    if (cmd.args.size() != 1) {
+        std::cerr << "help: unexpected arguments\n";
+        return 1;
+    }
+
+    std::cout << "eika shell\n";
+    std::cout << "builtins:\n";
+    for (const BuiltinSpec &spec : builtin_specs()) {
+        std::cout << "  " << spec.name << " - " << spec.summary << '\n';
+    }
+    return 0;
 }
 
 } // namespace
 
+int source_stream(shell::ShellState &state, std::istream &stream) {
+    shell::ExecuteOptions options{};
+    options.save_history = false;
+    return shell::execute_stream(state, stream, options);
+}
+
 int source_file(shell::ShellState &state, const std::string &path,
                 bool silent_missing) {
-    return source_file_impl(state, path, silent_missing);
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        if (!silent_missing) {
+            perror(path.c_str());
+        }
+        return 1;
+    }
+
+    return source_stream(state, file);
 }
 
 BuiltinPlan plan_builtin(const parser::Command &cmd, ExecContext ctx) {
-    const BuiltinKind kind = classify_builtin(cmd);
-    return BuiltinPlan{kind, decide_builtin(kind, ctx)};
+    if (cmd.args.empty()) {
+        return BuiltinPlan{BuiltinKind::None, BuiltinDecision::External};
+    }
+
+    const BuiltinSpec *spec = find_builtin_spec(cmd.args[0]);
+    if (spec == nullptr) {
+        return BuiltinPlan{BuiltinKind::None, BuiltinDecision::External};
+    }
+
+    if (ctx == ExecContext::ForegroundStandalone) {
+        return BuiltinPlan{spec->kind, BuiltinDecision::RunInParent};
+    }
+
+    if (can_run_builtin_in_child(cmd, spec->kind)) {
+        return BuiltinPlan{spec->kind, BuiltinDecision::RunInChild};
+    }
+
+    return BuiltinPlan{spec->kind, BuiltinDecision::Reject};
 }
 
 int run_builtin(shell::ShellState &state, const parser::Command &cmd,
                 BuiltinKind kind) {
-    switch (kind) {
-    case BuiltinKind::Exit:
-        return run_exit(state, cmd);
-    case BuiltinKind::Cd:
-        return run_cd(state, cmd);
-    case BuiltinKind::Pwd:
-        return run_pwd(state, cmd);
-    case BuiltinKind::Type:
-        return run_type(state, cmd);
-    case BuiltinKind::Source:
-        return run_source(state, cmd);
-    case BuiltinKind::History:
-        return run_history(state, cmd);
-    case BuiltinKind::Ps:
-        return run_ps(state, cmd);
-    case BuiltinKind::Kill:
-        return run_kill(state, cmd);
-    case BuiltinKind::AliasManage:
-        return run_alias_manage(state, cmd);
-    case BuiltinKind::AliasList:
-        return run_alias_list(state, cmd);
-    case BuiltinKind::SetList:
-        return env::run_set_list(state, cmd);
-    case BuiltinKind::ExportManage:
-        return env::run_export_manage(state, cmd);
-    case BuiltinKind::ExportList:
-        return env::run_export_list(state, cmd);
-    case BuiltinKind::None:
+    const BuiltinSpec *spec = find_builtin_spec(kind);
+    if (spec == nullptr) {
         return -1;
     }
 
-    return -1;
+    return spec->run(state, cmd);
 }
 
 bool is_builtin_name(const std::string &name) {
-    parser::Command fake_cmd{};
-    fake_cmd.args.push_back(name);
-    return classify_builtin(fake_cmd) != BuiltinKind::None;
+    return find_builtin_spec(name) != nullptr;
 }
 
 } // namespace builtins

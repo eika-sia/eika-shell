@@ -1,25 +1,14 @@
 # EikaShell
 
-This repository contains a small Unix-like shell written in C++17 (no particular reason for c++ version though)
-
-The project supports:
-
-- external command execution
-- pipelines
-- `&&`, `||` (only in foreground), `;`, and background execution with `&`
-- input and output redirections
-- shell builtins
-- aliases
-- shell variables, exported variables, and prefix assignments
-- history expansion
-- interactive line editing, tab completion, and syntax highlighting
+Small Unix-like shell written in C++.
 
 ## Build
 
-Use the provided bash helper:
+Use the provided helper:
+
 ```sh
-./make.sh # debug mode
-./make.sh -r # release mode
+./make.sh      # debug
+./make.sh -r   # release
 ```
 
 ## Run
@@ -30,7 +19,19 @@ Interactive shell:
 ./build/shell
 ```
 
-Non-interactive input from stdin:
+Run one command:
+
+```sh
+./build/shell -c 'echo hello'
+```
+
+Run a script file:
+
+```sh
+./build/shell script.esh
+```
+
+Read commands from stdin:
 
 ```sh
 printf 'echo hello\npwd\n' | ./build/shell
@@ -38,21 +39,23 @@ printf 'echo hello\npwd\n' | ./build/shell
 
 ## Implemented Features
 
-### Parsing and Execution
+### Command execution
 
-- simple commands
+- external command execution
 - pipelines with `|`
-- conditional execution with `&&` and `||`
-- sequential execution with `;`
-- background execution with `&`
+- `&&`, `||`, `;`, and background execution with `&`
 - input redirection with `<`
 - output redirection with `>` and `>>`
+- foreground and background process execution
 
 ### Builtins
 
+- `help`
 - `cd`
 - `pwd`
 - `exit`
+- `type`
+- `source`
 - `history`
 - `ps`
 - `kill`
@@ -61,97 +64,113 @@ printf 'echo hello\npwd\n' | ./build/shell
 - `set`
 - `export`
 - `unset`
-- `type`
-- `source`
 
-### Expansion
+### Expansion and shell state
 
-- history expansion with `!!` and `!n`
+- history expansion with `!!`, `!N`, and `!-N`
 - variable expansion with `$NAME` and `$?`
 - tilde expansion
 - alias expansion
+- shell-local variables with `NAME=value`
+- temporary per-command assignments with `NAME=value cmd`
+- exported variables with `export NAME` and `export NAME=value`
+- assignment-only commands such as `NAME=value` and `NAME=value > file`
 
-### Environment Model
+### Interactive features
 
-The shell keeps its own variable table in `ShellState`.
-
-- `NAME=value` stores a shell variable
-- `export NAME` exports variable based on already set value
-- `export NAME=value` sets and exports in one step
-- `unset NAME` removes a variable
-- `NAME=value cmd` applies the assignment only to that command (sets to `envp` via `execvpe`, also able to preload different `PATH`)
-
-Assignment execution semantics are handled separately from parsing in
-`builtins/env/envexec`.
-
-### Interactive Mode
-
-- custom raw mode input handling
-- arrow key history navigation
-- left/right movement
+- custom raw-mode input handling
+- arrow-key history navigation
+- left/right cursor movement
 - backspace and delete
 - tab completion for commands and paths
 - syntax highlighting
+- comment highlighting
 
-When stdin is not a TTY, the shell switches to non-interactive mode and reads plain lines from stdin without prompt rendering or raw input handling.
+### Startup and persistence
+
+- `~/.eshrc` is sourced on interactive startup if it exists
+- `~/.eshrc_history` is loaded on interactive startup if it exists
+- interactive history is saved back to `~/.eshrc_history` on exit
+- missing startup/history files are ignored silently
+
+### Scripting and comments
+
+- `#` starts a comment outside quotes
+- `source file` runs in the current shell
+- `source`, `-c`, and script-file execution do not record inner commands into history
+
+## Current Semantics
+
+### Variables
+
+- `NAME=value`
+  sets a shell-local variable in the current shell
+- `NAME=value cmd`
+  applies the assignment only to that command
+- `export NAME` / `export NAME=value`
+  marks an existing variable for export, or creates an empty exported variable
+- `unset NAME`
+  removes the variable from shell state, and from the process environment if it was exported
+
+### Directory state
+
+- `cd -` switches to `OLDPWD`
+- `OLDPWD` is tracked as a shell-local variable, not an exported environment variable
+
+### Assignment-only commands
+
+- foreground standalone assignment-only commands update the shell
+- background or pipeline assignment-only commands run in a child and do not mutate the parent shell
+- example:
+
+```sh
+FOO=bar
+set | grep FOO        # sees FOO
+
+FOO=bar env | grep FOO   # env sees FOO
+FOO=bar | env | grep FOO # env does not see FOO
+```
 
 ## Project Layout
 
 - `main.cpp`
-  Program entry point.
+  program entry point and top-level mode selection
 - `shell/`
-  High-level shell control flow, terminal handling, input, prompt rendering, signal handling, and process launching.
+  shell control flow, input, prompt rendering, terminal handling, signals, and exec helpers
 - `parser/`
-  Tokenization and parsing into the shell AST.
+  tokenization and parsing into the shell AST
 - `builtins/`
-  Builtin dispatch plus builtin-specific modules such as alias and environment.
+  builtin dispatch and builtin-specific modules
 - `features/`
-  Interactive and textual features such as completion, highlighting, history, and expansion.
+  history, highlighting, completion, expansion, and shared shell-text scanning
 - `process/`
-  Tracking child processes and normalizing wait status.
+  tracked child process state and wait-status normalization
 
 ## Execution Flow
 
-At a high level the shell does the following:
+At a high level the shell does this:
 
-1. Read a line.
+1. Read a line or script line.
 2. Expand history.
 3. Parse into a command list.
 4. Expand aliases on the parsed structure.
-5. Expand variables and `~` per command before execution.
-6. Decide whether a command should run as a parent builtin, child builtin, or
-   external command.
-7. Launch pipelines, apply redirections, and wait for foreground jobs.
+5. Expand variables and `~` per command.
+6. Decide whether a command runs in the parent, in a child, or as an external command.
+7. Apply redirections, launch pipelines, and wait for foreground work.
 
-## Parser Structure
+## Not Implemented
 
-The parser currently has these layers:
-
-- `parser/internals/tokenize.*`
-  Converts raw input into shell tokens.
-- `parser/internals/parse_simple_command.cpp`
-  Parses words, assignments, and redirections into a single command.
-- `parser/internals/parse_structure.cpp`
-  Builds pipelines and conditional chains.
-- `parser/parser.cpp`
-  Public entry points for parsing a command, pipeline, or full command line.
-
-## Current Limitations
-
-The shell does not yet implement:
-
-- full job control (`jobs`, `fg`, `bg`, stopped jobs)
+- full job control: `jobs`, `fg`, `bg`, stopped jobs, `SIGTSTP`/`SIGCONT` handling
 - command substitution
 - globbing
 - subshells
 - heredocs
+- shell functions
 - background conditional chains such as `a && b &`
 
-The shell also uses a custom interactive input path, so some escape handling is still intentionally simpler than a full POSIX shell.
+## Notes
 
-## Extra notes
-
-- Alias expansion is textual and reparses the full command line after each expansion step.
-- Variable/tilde expansion is reparsed per command.
-- Parent-run builtins and assignment-only commands use dedicated helpers in `shell/exec/exec.cpp` so redirections still work in the shell process.
+- Alias expansion stays textual and reparses the command line after each expansion step.
 - External commands use `execvpe` with an explicitly constructed environment block.
+- Parent-run builtins and assignment-only commands use dedicated parent execution helpers so redirections still work without forking.
+- The shell is intentionally simpler than a full POSIX shell, especially around escape handling and job control.

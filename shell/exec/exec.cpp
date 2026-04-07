@@ -15,6 +15,10 @@
 namespace shell::exec {
 namespace {
 
+bool is_assignment_only_command(const parser::Command &cmd) {
+    return cmd.args.empty() && !cmd.assignments.empty();
+}
+
 struct SavedStdio {
     int stdin_fd = -1;
     int stdout_fd = -1;
@@ -210,6 +214,14 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
 
             if (!apply_redirections(cmd)) {
                 _exit(1);
+            }
+
+            if (is_assignment_only_command(cmd)) {
+                builtins::env::apply_temporary_assignments(state,
+                                                           cmd.assignments);
+                std::cout.flush();
+                std::cerr.flush();
+                _exit(0);
             }
 
             // builtin pipelining

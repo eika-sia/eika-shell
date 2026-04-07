@@ -1,5 +1,6 @@
 #include "process.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <sys/wait.h>
@@ -89,6 +90,13 @@ void mark_process_finished(shell::ShellState &state, pid_t pid,
 void cleanup_finished_processes(shell::ShellState &state) {
     while (process_reaper(state, -1, WNOHANG)) {
     }
+
+    state.processes.erase(
+        std::remove_if(state.processes.begin(), state.processes.end(),
+                       [](const ProcessInfo &proc) {
+                           return !proc.running && proc.has_wait_status;
+                       }),
+        state.processes.end());
 }
 
 int shell_status_from_wait_status(int raw_wait_status) {

@@ -185,77 +185,67 @@ std::string expand_variables(const shell::ShellState &state,
     return features::shell_text::apply_replacements(line, replacements);
 }
 
-int run_export_list(shell::ShellState &state, const parser::Command &cmd) {
-    return run_variable_list(cmd, "export", state, true, "export ");
-}
-
-int run_set_list(shell::ShellState &state, const parser::Command &cmd) {
+int run_set(shell::ShellState &state, const parser::Command &cmd) {
     return run_variable_list(cmd, "set", state, false, "");
 }
 
-int run_export_manage(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args[0] == "export") {
-        if (cmd.args.size() < 2) {
+int run_export(shell::ShellState &state, const parser::Command &cmd) {
+    if (cmd.args.size() == 1) {
+        return run_variable_list(cmd, "export", state, true, "export ");
+    }
+
+    int status = 0;
+    for (size_t i = 1; i < cmd.args.size(); ++i) {
+        const std::string &raw = cmd.args[i];
+        if (raw == "-p") {
             std::cerr << "export: unexpected arguments\n";
             return 1;
         }
 
-        int status = 0;
-        for (size_t i = 1; i < cmd.args.size(); ++i) {
-            const std::string &raw = cmd.args[i];
-            if (raw == "-p") {
-                std::cerr << "export: unexpected arguments\n";
-                return 1;
-            }
-
-            std::string name;
-            std::string value;
-            if (parser::split_assignment_expression(raw, name, value)) {
-                if (!parser::is_valid_variable_name(name)) {
-                    print_invalid_identifier("export", name);
-                    status = 1;
-                    continue;
-                }
-
-                set_shell_variable(state, name, value);
-                export_variable(state, name);
-                continue;
-            }
-
-            if (!parser::is_valid_variable_name(raw)) {
-                print_invalid_identifier("export", raw);
+        std::string name;
+        std::string value;
+        if (parser::split_assignment_expression(raw, name, value)) {
+            if (!parser::is_valid_variable_name(name)) {
+                print_invalid_identifier("export", name);
                 status = 1;
                 continue;
             }
 
-            export_variable(state, raw);
+            set_shell_variable(state, name, value);
+            export_variable(state, name);
+            continue;
         }
 
-        return status;
+        if (!parser::is_valid_variable_name(raw)) {
+            print_invalid_identifier("export", raw);
+            status = 1;
+            continue;
+        }
+
+        export_variable(state, raw);
     }
 
-    if (cmd.args[0] == "unset") {
-        if (cmd.args.size() < 2) {
-            std::cerr << "unset: unexpected arguments\n";
-            return 1;
-        }
+    return status;
+}
 
-        int status = 0;
-        for (size_t i = 1; i < cmd.args.size(); ++i) {
-            if (!parser::is_valid_variable_name(cmd.args[i])) {
-                print_invalid_identifier("unset", cmd.args[i]);
-                status = 1;
-                continue;
-            }
-
-            unset_variable(state, cmd.args[i]);
-        }
-
-        return status;
+int run_unset(shell::ShellState &state, const parser::Command &cmd) {
+    if (cmd.args.size() < 2) {
+        std::cerr << "unset: unexpected arguments\n";
+        return 1;
     }
 
-    std::cerr << "export: what??\n";
-    return 1;
+    int status = 0;
+    for (size_t i = 1; i < cmd.args.size(); ++i) {
+        if (!parser::is_valid_variable_name(cmd.args[i])) {
+            print_invalid_identifier("unset", cmd.args[i]);
+            status = 1;
+            continue;
+        }
+
+        unset_variable(state, cmd.args[i]);
+    }
+
+    return status;
 }
 
 } // namespace builtins::env

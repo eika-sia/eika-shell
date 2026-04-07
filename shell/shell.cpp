@@ -17,6 +17,10 @@
 namespace shell {
 namespace {
 
+bool is_assignment_only_command(const parser::Command &cmd) {
+    return cmd.args.empty() && !cmd.assignments.empty();
+}
+
 bool should_execute_pipeline(parser::RunCondition condition,
                              int previous_status) {
     switch (condition) {
@@ -42,7 +46,7 @@ int dispatch_pipeline(ShellState &state, parser::Pipeline &pipe,
     if (pipe.commands.size() == 1) {
         const parser::Command &cmd = pipe.commands[0];
 
-        if (cmd.args.empty() && !cmd.assignments.empty()) {
+        if (!background && is_assignment_only_command(cmd)) {
             // Assignment-only commands still run redirections as a shell no-op,
             // so `A=1 >out` both persists `A` and creates/truncates `out`.
             return exec::run_parent_assignments_with_redirections(state, cmd);
@@ -88,9 +92,7 @@ void init_shell(ShellState &state) {
         return;
     }
 
-    const size_t history_size_before_rc = state.history.size();
     builtins::source_file(state, home->value + "/.eshrc", true);
-    state.history.resize(history_size_before_rc);
 }
 
 std::string trim(const std::string &source) {
@@ -100,7 +102,8 @@ std::string trim(const std::string &source) {
     return s;
 }
 
-void execute_command_line(ShellState &state, std::string line) {
+void execute_command_line(ShellState &state, std::string line,
+                          ExecuteOptions options) {
     line = trim(line);
     if (line.empty())
         return;
@@ -155,7 +158,20 @@ void execute_command_line(ShellState &state, std::string line) {
         }
     }
 
-    features::save_command_line(state, line);
+    if (options.save_history) {
+        features::save_command_line(state, line);
+    }
+}
+
+int execute_stream(ShellState &state, std::istream &stream,
+                   ExecuteOptions options) {
+    std::string line;
+    while (state.running && std::getline(stream, line)) {
+        execute_command_line(state, line, options);
+        process::cleanup_finished_processes(state);
+    }
+
+    return state.last_status;
 }
 
 } // namespace shell

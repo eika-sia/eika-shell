@@ -1,5 +1,7 @@
 #pragma once
 
+#include <istream>
+
 #include "../parser/parser.hpp"
 #include "../shell/shell.hpp"
 
@@ -11,15 +13,16 @@ enum class BuiltinKind {
     Cd,
     Pwd,
     Type,
+    Help,
     Source,
     History,
     Ps,
     Kill,
-    AliasList,
-    AliasManage,
-    SetList,
-    ExportList,
-    ExportManage
+    Alias,
+    Unalias,
+    Set,
+    Export,
+    Unset
 };
 enum class ExecContext {
     ForegroundStandalone,
@@ -38,6 +41,7 @@ int run_builtin(shell::ShellState &state, const parser::Command &cmd,
                 BuiltinKind kind);
 int source_file(shell::ShellState &state, const std::string &path,
                 bool silent_missing = false);
+int source_stream(shell::ShellState &state, std::istream &stream);
 
 bool is_builtin_name(const std::string &name);
 

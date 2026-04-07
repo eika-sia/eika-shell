@@ -1,5 +1,7 @@
 #include "highlighting.hpp"
 
+#include <cctype>
+
 #include "../../builtins/builtins.hpp"
 #include "../../builtins/env/env.hpp"
 #include "../../parser/assignments/assignment.hpp"
@@ -97,6 +99,48 @@ bool is_existing_path_token(const shell::ShellState &state,
     return features::path_exists(state, expand_for_lookup(state, token));
 }
 
+bool is_valid_history_reference(const shell::ShellState &state,
+                                const std::string &token) {
+    if (token == "!!") {
+        return !state.history.empty();
+    }
+
+    if (token.size() < 2 || token[0] != '!') {
+        return false;
+    }
+
+    size_t start = 1;
+    if (token[start] == '-') {
+        ++start;
+    }
+
+    if (start >= token.size()) {
+        return false;
+    }
+
+    for (size_t i = start; i < token.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(token[i]))) {
+            return false;
+        }
+    }
+
+    int num = 0;
+    try {
+        num = std::stoi(token.substr(1));
+    } catch (...) {
+        return false;
+    }
+
+    int index = -1;
+    if (num > 0) {
+        index = num - 1;
+    } else if (num < 0) {
+        index = static_cast<int>(state.history.size()) + num;
+    }
+
+    return index >= 0 && index < static_cast<int>(state.history.size());
+}
+
 size_t find_comment_start(const std::string &line) {
     size_t comment_start = std::string::npos;
     bool token_start = true;
@@ -148,6 +192,12 @@ TextStyle classify_word_token(const shell::ShellState &state,
             return style;
         }
 
+        if (is_valid_history_reference(state, token.text)) {
+            style.fg = HighlightColor::Green;
+            style.bold = true;
+            return style;
+        }
+
         if (is_command_valid(state, token.text)) {
             style.fg = HighlightColor::Green;
             style.bold = true;
@@ -160,6 +210,11 @@ TextStyle classify_word_token(const shell::ShellState &state,
             style.underline = true;
         }
 
+        return style;
+    }
+
+    if (is_valid_history_reference(state, token.text)) {
+        style.fg = HighlightColor::Blue;
         return style;
     }
 
