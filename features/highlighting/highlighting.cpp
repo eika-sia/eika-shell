@@ -5,12 +5,14 @@
 #include "../../parser/assignments/assignment.hpp"
 #include "../../parser/internals/tokenize.hpp"
 #include "../completion/path_completion.hpp"
+#include "../shell_text/shell_text.hpp"
 
 namespace features::highlighting {
 namespace {
 
 enum class HighlightColor {
     None,
+    Gray,
     Red,
     Green,
     Yellow,
@@ -95,6 +97,31 @@ bool is_existing_path_token(const shell::ShellState &state,
     return features::path_exists(state, expand_for_lookup(state, token));
 }
 
+size_t find_comment_start(const std::string &line) {
+    size_t comment_start = std::string::npos;
+    bool token_start = true;
+
+    shell_text::for_each_unescaped_position(
+        line, [&](size_t &i, const shell_text::ScanState &) {
+            const char c = line[i];
+
+            if (c == '#' && token_start) {
+                comment_start = i;
+                return false;
+            }
+
+            if (shell_text::is_shell_separator(c)) {
+                token_start = true;
+            } else {
+                token_start = false;
+            }
+
+            return true;
+        });
+
+    return comment_start;
+}
+
 TextStyle classify_word_token(const shell::ShellState &state,
                               const std::string &line,
                               const parser::Token &token,
@@ -158,6 +185,9 @@ std::string ansi_prefix_for_style(const TextStyle &style) {
     }
 
     switch (style.fg) {
+    case HighlightColor::Gray:
+        codes.push_back("90");
+        break;
     case HighlightColor::Red:
         codes.push_back("31");
         break;
@@ -215,6 +245,7 @@ std::string render_highlighted_line(const shell::ShellState &state,
                                     const std::string &line) {
     std::vector<parser::Token> tokens;
     parser::tokenize_line(line, tokens, parser::TokenizeMode::Relaxed);
+    const size_t comment_start = find_comment_start(line);
 
     std::vector<StyledRange> ranges;
 
@@ -258,6 +289,11 @@ std::string render_highlighted_line(const shell::ShellState &state,
 
         expecting_command_word = true;
         expecting_redirect_target = false;
+    }
+
+    if (comment_start != std::string::npos) {
+        ranges.push_back({comment_start, line.size(),
+                          TextStyle{HighlightColor::Gray}});
     }
 
     return render_with_styles(line, ranges);

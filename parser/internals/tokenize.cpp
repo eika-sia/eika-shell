@@ -34,6 +34,15 @@ bool should_consume_backslash_escape(char c, bool in_double_quote) {
     }
 }
 
+bool starts_comment(const std::string &current, char c, bool in_single_quote,
+                    bool in_double_quote) {
+    if (c != '#' || in_single_quote || in_double_quote) {
+        return false;
+    }
+
+    return current.empty();
+}
+
 void flush_word(std::vector<Token> &tokens, std::string &current,
                 size_t &current_start, size_t &current_end) {
     if (current_start == std::string::npos) {
@@ -112,6 +121,11 @@ TokenizeResult tokenize_line(const std::string &line,
         if (!in_single_quote && !in_double_quote && (c == ' ' || c == '\t')) {
             flush_word(tokens, current, current_start, current_end);
             continue;
+        }
+
+        if (starts_comment(current, c, in_single_quote, in_double_quote)) {
+            flush_word(tokens, current, current_start, current_end);
+            break;
         }
 
         if (!in_single_quote && !in_double_quote &&

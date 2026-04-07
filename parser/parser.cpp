@@ -171,9 +171,19 @@ CommandList parse_command_line(const std::string &line) {
     CommandList list{};
     list.valid = false;
 
-    std::string work;
+    std::string work = shell::trim(line);
+    if (work.empty()) {
+        list.valid = true;
+        return list;
+    }
+
     std::vector<Token> tokens;
-    if (!tokenize_work_line(line, work, tokens)) {
+    if (!tokenize_line(work, tokens).ok) {
+        return list;
+    }
+
+    if (tokens.empty()) {
+        list.valid = true;
         return list;
     }
 
