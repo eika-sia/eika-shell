@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <unistd.h>
 #include <sys/wait.h>
 #include <vector>
 
@@ -97,6 +98,21 @@ void cleanup_finished_processes(shell::ShellState &state) {
                            return !proc.running && proc.has_wait_status;
                        }),
         state.processes.end());
+}
+
+bool reap_process_with_poll(shell::ShellState &state, pid_t pid, int attempts,
+                            useconds_t sleep_usec) {
+    for (int i = 0; i < attempts; ++i) {
+        if (process_reaper(state, pid, WNOHANG)) {
+            return true;
+        }
+
+        if (i + 1 < attempts) {
+            usleep(sleep_usec);
+        }
+    }
+
+    return false;
 }
 
 int shell_status_from_wait_status(int raw_wait_status) {

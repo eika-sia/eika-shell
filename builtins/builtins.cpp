@@ -295,6 +295,7 @@ int run_kill(shell::ShellState &state, const parser::Command &cmd) {
         return 1;
     }
 
+    process::reap_process_with_poll(state, pid);
     return 0;
 }
 

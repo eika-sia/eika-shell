@@ -29,6 +29,8 @@ void mark_process_finished(shell::ShellState &state, pid_t pid,
                            int raw_wait_status);
 
 void cleanup_finished_processes(shell::ShellState &state);
+bool reap_process_with_poll(shell::ShellState &state, pid_t pid, int attempts = 8,
+                            useconds_t sleep_usec = 1000);
 int shell_status_from_wait_status(int raw_wait_status);
 int wait_for_processes(shell::ShellState &state,
                        const std::vector<pid_t> &pids);

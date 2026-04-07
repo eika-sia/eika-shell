@@ -3,6 +3,7 @@
 #include <cctype>
 #include <fstream>
 #include <iostream>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,15 @@ std::string resolve_history_path(const shell::ShellState &state) {
     }
 
     return home->value + "/.eshrc_history";
+}
+
+bool history_file_exists(const std::string &path) {
+    if (path.empty()) {
+        return false;
+    }
+
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path, ec);
 }
 
 HistoryNumberParseResult parse_history_number(const std::string &line,
@@ -197,7 +207,7 @@ void save_shell_history(const shell::ShellState &state) {
     }
 
     const std::string path = resolve_history_path(state);
-    if (!path.empty()) {
+    if (history_file_exists(path)) {
         save_history_file(state, path);
     }
 }
