@@ -8,9 +8,9 @@
 #include <string>
 #include <unistd.h>
 
+#include "../features/completion/path_completion.hpp"
 #include "./alias/alias.hpp"
 #include "./env/env.hpp"
-#include "../features/completion/path_completion.hpp"
 
 namespace builtins {
 namespace {
@@ -113,7 +113,8 @@ std::string describe_command_type(const shell::ShellState &state,
         return "";
     }
 
-    const std::string full_path = features::resolve_command_in_path(state, name);
+    const std::string full_path =
+        features::resolve_command_in_path(state, name);
     if (!full_path.empty()) {
         return name + " is " + full_path;
     }
@@ -143,15 +144,13 @@ int run_type(const shell::ShellState &state, const parser::Command &cmd) {
     return status;
 }
 
-int run_source(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() != 2) {
-        std::cerr << "source: unexpected arguments\n";
-        return 1;
-    }
-
-    std::ifstream file(cmd.args[1]);
+int source_file_impl(shell::ShellState &state, const std::string &path,
+                     bool silent_missing) {
+    std::ifstream file(path);
     if (!file.is_open()) {
-        perror("source");
+        if (!silent_missing) {
+            perror(path.c_str());
+        }
         return 1;
     }
 
@@ -164,6 +163,15 @@ int run_source(shell::ShellState &state, const parser::Command &cmd) {
     }
 
     return state.last_status;
+}
+
+int run_source(shell::ShellState &state, const parser::Command &cmd) {
+    if (cmd.args.size() != 2) {
+        std::cerr << "source: unexpected arguments\n";
+        return 1;
+    }
+
+    return source_file_impl(state, cmd.args[1], false);
 }
 
 int run_history(shell::ShellState &state, const parser::Command &cmd) {
@@ -303,6 +311,11 @@ BuiltinDecision decide_builtin(BuiltinKind kind, ExecContext ctx) {
 }
 
 } // namespace
+
+int source_file(shell::ShellState &state, const std::string &path,
+                bool silent_missing) {
+    return source_file_impl(state, path, silent_missing);
+}
 
 BuiltinPlan plan_builtin(const parser::Command &cmd, ExecContext ctx) {
     const BuiltinKind kind = classify_builtin(cmd);

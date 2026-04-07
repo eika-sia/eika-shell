@@ -36,6 +36,8 @@ struct BuiltinPlan {
 BuiltinPlan plan_builtin(const parser::Command &cmd, ExecContext ctx);
 int run_builtin(shell::ShellState &state, const parser::Command &cmd,
                 BuiltinKind kind);
+int source_file(shell::ShellState &state, const std::string &path,
+                bool silent_missing = false);
 
 bool is_builtin_name(const std::string &name);
 

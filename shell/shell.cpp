@@ -75,6 +75,22 @@ void init_shell(ShellState &state) {
     terminal::init_terminal(state);
     signals::install_signal_handlers();
     builtins::env::import_process_environment(state);
+
+    if (!state.interactive) {
+        return;
+    }
+
+    features::load_shell_history(state);
+
+    const shell::ShellVariable *home =
+        builtins::env::find_variable(state, "HOME");
+    if (home == nullptr || home->value.empty()) {
+        return;
+    }
+
+    const size_t history_size_before_rc = state.history.size();
+    builtins::source_file(state, home->value + "/.eshrc", true);
+    state.history.resize(history_size_before_rc);
 }
 
 std::string trim(const std::string &source) {

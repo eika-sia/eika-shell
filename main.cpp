@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string>
 
+#include "features/history/history.hpp"
 #include "shell/input/input.hpp"
 #include "shell/prompt/prompt.hpp"
 #include "shell/shell.hpp"
@@ -42,6 +43,7 @@ int main(int argc, char **argv) {
             }
 
             run_line(state, argv[2]);
+            features::save_shell_history(state);
             return state.last_status;
         }
 
@@ -58,7 +60,9 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        return run_stream(state, script);
+        const int status = run_stream(state, script);
+        features::save_shell_history(state);
+        return status;
     }
 
     while (state.running) {
@@ -84,5 +88,6 @@ int main(int argc, char **argv) {
         run_line(state, input.line);
     }
 
+    features::save_shell_history(state);
     return state.last_status;
 }

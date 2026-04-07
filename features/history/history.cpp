@@ -1,10 +1,12 @@
 #include "history.hpp"
 
 #include <cctype>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
 
+#include "../../builtins/env/env.hpp"
 #include "../shell_text/shell_text.hpp"
 
 namespace features {
@@ -16,6 +18,74 @@ enum class HistoryExpansionResult {
     Error,
 };
 
+enum class HistoryNumberParseResult {
+    NoMatch,
+    Parsed,
+    Error,
+};
+
+std::string resolve_history_path(const shell::ShellState &state) {
+    const shell::ShellVariable *home =
+        builtins::env::find_variable(state, "HOME");
+    if (home == nullptr || home->value.empty()) {
+        return "";
+    }
+
+    return home->value + "/.eshrc_history";
+}
+
+HistoryNumberParseResult parse_history_number(const std::string &line,
+                                              size_t start, size_t &end,
+                                              int &num) {
+    end = start;
+    if (end < line.size() && line[end] == '-') {
+        ++end;
+    }
+
+    if (end >= line.size() ||
+        !std::isdigit(static_cast<unsigned char>(line[end]))) {
+        return HistoryNumberParseResult::NoMatch;
+    }
+
+    while (end < line.size() &&
+           std::isdigit(static_cast<unsigned char>(line[end]))) {
+        ++end;
+    }
+
+    try {
+        num = std::stoi(line.substr(start, end - start));
+    } catch (const std::invalid_argument &) {
+        std::cerr << "history: invalid argument" << std::endl;
+        return HistoryNumberParseResult::Error;
+    } catch (const std::out_of_range &) {
+        std::cerr << "history: number out of range" << std::endl;
+        return HistoryNumberParseResult::Error;
+    }
+
+    return HistoryNumberParseResult::Parsed;
+}
+
+HistoryExpansionResult apply_history_reference(
+    const shell::ShellState &state, int num, size_t begin, size_t end,
+    shell_text::Replacement &replacement) {
+    int index = -1;
+    if (num > 0) {
+        index = num - 1;
+    } else if (num < 0) {
+        index = static_cast<int>(state.history.size()) + num;
+    }
+
+    if (index < 0 || index >= static_cast<int>(state.history.size())) {
+        std::cerr << "history: invalid history number " << num << std::endl;
+        return HistoryExpansionResult::Error;
+    }
+
+    replacement.begin = begin;
+    replacement.end = end;
+    replacement.text = state.history[index];
+    return HistoryExpansionResult::Applied;
+}
+
 HistoryExpansionResult parse_history_expansion(
     const shell::ShellState &state, const std::string &line, size_t begin,
     shell_text::Replacement &replacement) {
@@ -23,40 +93,25 @@ HistoryExpansionResult parse_history_expansion(
         return HistoryExpansionResult::NoMatch;
     }
 
-    int num = 0;
     size_t end = begin + 1;
-
     if (line[end] == '!') {
-        num = static_cast<int>(state.history.size());
         ++end;
-    } else if (std::isdigit(static_cast<unsigned char>(line[end]))) {
-        while (end < line.size() &&
-               std::isdigit(static_cast<unsigned char>(line[end]))) {
-            ++end;
-        }
+        return apply_history_reference(state,
+                                       static_cast<int>(state.history.size()),
+                                       begin, end, replacement);
+    }
 
-        try {
-            num = std::stoi(line.substr(begin + 1, end - (begin + 1)));
-        } catch (const std::invalid_argument &) {
-            std::cerr << "history: invalid argument" << std::endl;
-            return HistoryExpansionResult::Error;
-        } catch (const std::out_of_range &) {
-            std::cerr << "history: number out of range" << std::endl;
-            return HistoryExpansionResult::Error;
-        }
-    } else {
+    int num = 0;
+    switch (parse_history_number(line, begin + 1, end, num)) {
+    case HistoryNumberParseResult::NoMatch:
         return HistoryExpansionResult::NoMatch;
-    }
-
-    if (num < 1 || num > static_cast<int>(state.history.size())) {
-        std::cerr << "history: invalid history number " << num << std::endl;
+    case HistoryNumberParseResult::Error:
         return HistoryExpansionResult::Error;
+    case HistoryNumberParseResult::Parsed:
+        break;
     }
 
-    replacement.begin = begin;
-    replacement.end = end;
-    replacement.text = state.history[num - 1];
-    return HistoryExpansionResult::Applied;
+    return apply_history_reference(state, num, begin, end, replacement);
 }
 
 } // namespace
@@ -102,6 +157,49 @@ bool expand_history(shell::ShellState &state, std::string &line) {
 
 void save_command_line(shell::ShellState &state, const std::string &line) {
     state.history.push_back(line);
+}
+
+void load_history_file(shell::ShellState &state, const std::string &path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        return;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            state.history.push_back(line);
+        }
+    }
+}
+
+void save_history_file(const shell::ShellState &state, const std::string &path) {
+    std::ofstream file(path);
+    if (!file.is_open()) {
+        return;
+    }
+
+    for (const std::string &line : state.history) {
+        file << line << '\n';
+    }
+}
+
+void load_shell_history(shell::ShellState &state) {
+    const std::string path = resolve_history_path(state);
+    if (!path.empty()) {
+        load_history_file(state, path);
+    }
+}
+
+void save_shell_history(const shell::ShellState &state) {
+    if (!state.interactive) {
+        return;
+    }
+
+    const std::string path = resolve_history_path(state);
+    if (!path.empty()) {
+        save_history_file(state, path);
+    }
 }
 
 } // namespace features
