@@ -215,16 +215,16 @@ bool path_is_executable_file(const shell::ShellState &state,
            access(resolved.c_str(), X_OK) == 0;
 }
 
-bool command_exists_in_path(const shell::ShellState &state,
-                            const std::string &token) {
+std::string resolve_command_in_path(const shell::ShellState &state,
+                                    const std::string &token) {
     if (token.empty() || looks_like_path_token(token)) {
-        return false;
+        return "";
     }
 
     const std::string path_str =
         builtins::env::get_variable_value(state, "PATH");
     if (path_str.empty()) {
-        return false;
+        return "";
     }
 
     size_t start = 0;
@@ -246,11 +246,16 @@ bool command_exists_in_path(const shell::ShellState &state,
 
         const std::string full_path = dir + "/" + token;
         if (access(full_path.c_str(), X_OK) == 0 && !is_directory(full_path)) {
-            return true;
+            return full_path;
         }
     }
 
-    return false;
+    return "";
+}
+
+bool command_exists_in_path(const shell::ShellState &state,
+                            const std::string &token) {
+    return !resolve_command_in_path(state, token).empty();
 }
 
 } // namespace features

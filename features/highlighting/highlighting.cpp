@@ -87,7 +87,7 @@ bool is_command_valid(const shell::ShellState &state,
     if (features::looks_like_path_token(cmd))
         return features::path_is_executable_file(state, cmd);
 
-    return features::command_exists_in_path(state, cmd);
+    return !features::resolve_command_in_path(state, cmd).empty();
 }
 
 bool is_existing_path_token(const shell::ShellState &state,

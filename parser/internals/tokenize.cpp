@@ -7,6 +7,33 @@
 namespace parser {
 namespace {
 
+bool should_consume_backslash_escape(char c, bool in_double_quote) {
+    if (in_double_quote) {
+        return c == '"' || c == '\\' || c == '$' || c == '!' ||
+               c == '\n';
+    }
+
+    switch (c) {
+    case ' ':
+    case '\t':
+    case '\\':
+    case '\'':
+    case '"':
+    case '$':
+    case '!':
+    case '~':
+    case '|':
+    case '&':
+    case ';':
+    case '<':
+    case '>':
+    case '\n':
+        return true;
+    default:
+        return false;
+    }
+}
+
 void flush_word(std::vector<Token> &tokens, std::string &current,
                 size_t &current_start, size_t &current_end) {
     if (current_start == std::string::npos) {
@@ -37,12 +64,18 @@ TokenizeResult tokenize_line(const std::string &line,
     bool in_single_quote = false;
     bool in_double_quote = false;
     bool escape = false;
+    bool escape_in_double_quote = false;
 
     for (size_t i = 0; i < line.size(); ++i) {
         char c = line[i];
 
         if (escape) {
-            current.push_back(c);
+            if (should_consume_backslash_escape(c, escape_in_double_quote)) {
+                current.push_back(c);
+            } else {
+                current.push_back('\\');
+                current.push_back(c);
+            }
             current_end = i + 1;
             escape = false;
             continue;
@@ -54,6 +87,7 @@ TokenizeResult tokenize_line(const std::string &line,
             }
             current_end = i + 1;
             escape = true;
+            escape_in_double_quote = in_double_quote;
             continue;
         }
 

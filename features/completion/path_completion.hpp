@@ -20,6 +20,8 @@ std::vector<std::string> complete_command_token(const shell::ShellState &state,
 bool path_exists(const shell::ShellState &state, const std::string &token);
 bool path_is_executable_file(const shell::ShellState &state,
                              const std::string &token);
+std::string resolve_command_in_path(const shell::ShellState &state,
+                                    const std::string &token);
 bool command_exists_in_path(const shell::ShellState &state,
                             const std::string &token);
 } // namespace features

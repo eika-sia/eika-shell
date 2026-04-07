@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <signal.h>
 #include <string>
@@ -9,6 +10,7 @@
 
 #include "./alias/alias.hpp"
 #include "./env/env.hpp"
+#include "../features/completion/path_completion.hpp"
 
 namespace builtins {
 namespace {
@@ -69,6 +71,99 @@ int run_cd(shell::ShellState &state, const parser::Command &cmd) {
 
     perror("cd");
     return 1;
+}
+
+int run_pwd(const shell::ShellState &state, const parser::Command &cmd) {
+    if (cmd.args.size() != 1) {
+        std::cerr << "pwd: unexpected arguments\n";
+        return 1;
+    }
+
+    if (const shell::ShellVariable *pwd = env::find_variable(state, "PWD")) {
+        std::cout << pwd->value << std::endl;
+        return 0;
+    }
+
+    char *cwd = getcwd(nullptr, 0);
+    if (cwd == nullptr) {
+        perror("getcwd");
+        return 1;
+    }
+
+    std::cout << cwd << std::endl;
+    free(cwd);
+    return 0;
+}
+
+std::string describe_command_type(const shell::ShellState &state,
+                                  const std::string &name) {
+    if (const auto alias_it = state.alias.find(name);
+        alias_it != state.alias.end()) {
+        return name + " is an alias for " + alias_it->second;
+    }
+
+    if (is_builtin_name(name)) {
+        return name + " is a shell builtin";
+    }
+
+    if (features::looks_like_path_token(name)) {
+        if (features::path_is_executable_file(state, name)) {
+            return name + " is " + name;
+        }
+        return "";
+    }
+
+    const std::string full_path = features::resolve_command_in_path(state, name);
+    if (!full_path.empty()) {
+        return name + " is " + full_path;
+    }
+
+    return "";
+}
+
+int run_type(const shell::ShellState &state, const parser::Command &cmd) {
+    if (cmd.args.size() < 2) {
+        std::cerr << "type: unexpected arguments\n";
+        return 1;
+    }
+
+    int status = 0;
+    for (size_t i = 1; i < cmd.args.size(); ++i) {
+        const std::string description =
+            describe_command_type(state, cmd.args[i]);
+        if (description.empty()) {
+            std::cerr << "type: " << cmd.args[i] << ": not found\n";
+            status = 1;
+            continue;
+        }
+
+        std::cout << description << std::endl;
+    }
+
+    return status;
+}
+
+int run_source(shell::ShellState &state, const parser::Command &cmd) {
+    if (cmd.args.size() != 2) {
+        std::cerr << "source: unexpected arguments\n";
+        return 1;
+    }
+
+    std::ifstream file(cmd.args[1]);
+    if (!file.is_open()) {
+        perror("source");
+        return 1;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        shell::execute_command_line(state, line);
+        if (!state.running) {
+            break;
+        }
+    }
+
+    return state.last_status;
 }
 
 int run_history(shell::ShellState &state, const parser::Command &cmd) {
@@ -149,6 +244,15 @@ BuiltinKind classify_builtin(const parser::Command &cmd) {
     if (first == "cd") {
         return BuiltinKind::Cd;
     }
+    if (first == "pwd") {
+        return BuiltinKind::Pwd;
+    }
+    if (first == "type") {
+        return BuiltinKind::Type;
+    }
+    if (first == "source") {
+        return BuiltinKind::Source;
+    }
     if (first == "history") {
         return BuiltinKind::History;
     }
@@ -188,7 +292,8 @@ BuiltinDecision decide_builtin(BuiltinKind kind, ExecContext ctx) {
         return BuiltinDecision::RunInParent;
     }
 
-    if (kind == BuiltinKind::History || kind == BuiltinKind::Ps ||
+    if (kind == BuiltinKind::Pwd || kind == BuiltinKind::Type ||
+        kind == BuiltinKind::History || kind == BuiltinKind::Ps ||
         kind == BuiltinKind::AliasList || kind == BuiltinKind::SetList ||
         kind == BuiltinKind::ExportList) {
         return BuiltinDecision::RunInChild;
@@ -211,6 +316,12 @@ int run_builtin(shell::ShellState &state, const parser::Command &cmd,
         return run_exit(state, cmd);
     case BuiltinKind::Cd:
         return run_cd(state, cmd);
+    case BuiltinKind::Pwd:
+        return run_pwd(state, cmd);
+    case BuiltinKind::Type:
+        return run_type(state, cmd);
+    case BuiltinKind::Source:
+        return run_source(state, cmd);
     case BuiltinKind::History:
         return run_history(state, cmd);
     case BuiltinKind::Ps:

@@ -184,6 +184,24 @@ InputResult read_command_line(shell::ShellState &state) {
             break;
         }
 
+        if (ch == 4) { // Ctrl+D
+            if (buf.empty()) {
+                result.eof = true;
+                break;
+            }
+
+            if (cursor < buf.size()) {
+                if (browsing_history) {
+                    browsing_history = false;
+                    hist_index = state.history.size();
+                }
+
+                buf.erase(cursor, 1);
+                shell::prompt::redraw_input_line(state, buf, cursor, false);
+            }
+            continue;
+        }
+
         if (ch == '\033') {
             handle_escape_sequence(state, buf, cursor, state.history, hist_index,
                                    draft, browsing_history);

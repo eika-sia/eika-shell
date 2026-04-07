@@ -23,9 +23,9 @@ int main() {
             continue;
         }
         if (input.eof) {
-            if (state.interactive) {
-                std::cout << '\n';
-            }
+            std::cout << "exit" << '\n';
+            std::cout.flush();
+            shell::execute_command_line(state, "exit");
             break;
         }
 
