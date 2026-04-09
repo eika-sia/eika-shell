@@ -266,7 +266,7 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
 
             std::vector<char *> argv = build_argv(cmd.args);
             execvpe(argv[0], argv.data(), env.envp.data());
-            perror("execvpe");
+            perror(argv[0]);
             _exit(1);
         }
 
