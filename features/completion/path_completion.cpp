@@ -102,11 +102,14 @@ bool looks_like_path_token(const std::string &token) {
 }
 
 std::vector<std::string> complete_path_token(const shell::ShellState &state,
-                                             const std::string &token) {
+                                             const std::string &token,
+                                             bool keep_current_dir_prefix) {
     std::vector<std::string> results;
 
     std::string dir_part = get_directory_part(token);
     std::string base_part = get_basename_part(token);
+    const bool preserve_dot_slash =
+        keep_current_dir_prefix && token.rfind("./", 0) == 0;
 
     std::string expanded_dir = expand_tilde_prefix(state, dir_part);
     std::vector<std::string> names =
@@ -116,7 +119,7 @@ std::vector<std::string> complete_path_token(const shell::ShellState &state,
         std::string candidate;
 
         if (dir_part == ".") {
-            candidate = name;
+            candidate = preserve_dot_slash ? "./" + name : name;
         } else if (dir_part == "/") {
             candidate = "/" + name;
         } else {

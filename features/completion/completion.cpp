@@ -92,13 +92,14 @@ void handle_tab_completion(const shell::ShellState &state, std::string &buf,
                            size_t &cursor) {
     size_t token_start = get_current_token_start(buf, cursor);
     size_t token_end = get_current_token_end(buf, cursor);
+    const bool command_position = is_command_position(buf, cursor);
 
     std::string token = buf.substr(token_start, token_end - token_start);
 
     std::vector<std::string> matches;
     if (features::looks_like_path_token(token)) {
-        matches = features::complete_path_token(state, token);
-    } else if (is_command_position(buf, cursor)) {
+        matches = features::complete_path_token(state, token, command_position);
+    } else if (command_position) {
         matches = features::complete_command_token(state, token);
     } else {
         matches = features::complete_path_token(state, token);
