@@ -4,6 +4,10 @@ Small Unix-like shell written in C++.
 
 ## Build
 
+### Requirements
+- CMake to build the shell
+- Nerd font of your choice to render git icon in header
+
 Use the provided helper:
 
 ```sh

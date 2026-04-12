@@ -347,7 +347,7 @@ std::string build_git_segment(const shell::ShellState &state) {
         return "";
     }
 
-    std::string segment = green + "on   " + info.ref_name + reset;
+    std::string segment = green + "on 󰊢 " + info.ref_name + reset;
     if (info.ahead > 0) {
         segment += " " + cyan + "↑" + std::to_string(info.ahead) + reset;
     }
