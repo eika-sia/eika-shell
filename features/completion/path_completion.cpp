@@ -103,13 +103,13 @@ bool looks_like_path_token(const std::string &token) {
 
 std::vector<std::string> complete_path_token(const shell::ShellState &state,
                                              const std::string &token,
-                                             bool keep_current_dir_prefix) {
+                                             bool filter_executable) {
     std::vector<std::string> results;
 
     std::string dir_part = get_directory_part(token);
     std::string base_part = get_basename_part(token);
     const bool preserve_dot_slash =
-        keep_current_dir_prefix && token.rfind("./", 0) == 0;
+        filter_executable && token.rfind("./", 0) == 0;
 
     std::string expanded_dir = expand_tilde_prefix(state, dir_part);
     std::vector<std::string> names =
@@ -139,7 +139,13 @@ std::vector<std::string> complete_path_token(const shell::ShellState &state,
             candidate += "/";
         }
 
-        results.push_back(candidate);
+        // when filtering for executables abide:
+        //  1. token is a path (ie /t -> /tmp/)
+        //  2. token is executable
+        if (!filter_executable || (path_is_executable_file(state, full_path) ||
+                                   is_directory(full_path))) {
+            results.push_back(candidate);
+        }
     }
 
     return results;
