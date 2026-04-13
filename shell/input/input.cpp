@@ -5,6 +5,7 @@
 #include <string>
 #include <termios.h>
 #include <unistd.h>
+#include <vector>
 
 #include "../../features/completion/completion.hpp"
 #include "../prompt/prompt.hpp"
@@ -50,6 +51,38 @@ void redraw_buffer(const shell::ShellState &state,
                    bool full_prompt = false) {
     shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
                                      full_prompt);
+}
+
+void print_completion_candidates(
+    const std::vector<std::string> &candidates) {
+    write(STDOUT_FILENO, "\n", 1);
+    for (const std::string &candidate : candidates) {
+        write(STDOUT_FILENO, candidate.c_str(), candidate.size());
+        write(STDOUT_FILENO, "  ", 2);
+    }
+    write(STDOUT_FILENO, "\n", 1);
+}
+
+void handle_tab_completion(const shell::ShellState &state,
+                           editor_state::LineBuffer &buffer) {
+    const features::CompletionResult completion =
+        features::complete_at_cursor(state, buffer.text, buffer.cursor);
+
+    switch (completion.action) {
+    case features::CompletionAction::None:
+        return;
+    case features::CompletionAction::ReplaceToken:
+        buffer.text.replace(completion.replace_begin,
+                            completion.replace_end - completion.replace_begin,
+                            completion.replacement);
+        buffer.cursor = completion.replace_begin + completion.replacement.size();
+        redraw_buffer(state, buffer);
+        return;
+    case features::CompletionAction::ShowCandidates:
+        print_completion_candidates(completion.candidates);
+        redraw_buffer(state, buffer, true);
+        return;
+    }
 }
 
 } // namespace
@@ -168,7 +201,7 @@ InputResult read_command_line(shell::ShellState &state) {
             continue;
         }
         case key::KeyKind::Tab:
-            features::handle_tab_completion(state, buffer.text, buffer.cursor);
+            handle_tab_completion(state, buffer);
             continue;
         case key::KeyKind::Backspace:
             if (editor_state::erase_before_cursor(buffer, history_state,

@@ -1,12 +1,10 @@
 #include "completion.hpp"
 #include "path_completion.hpp"
 
-#include "../../shell/prompt/prompt.hpp"
 #include "../shell_text/shell_text.hpp"
 
 #include <algorithm>
 #include <string>
-#include <unistd.h>
 #include <vector>
 
 namespace features {
@@ -77,19 +75,10 @@ std::string longest_common_prefix(const std::vector<std::string> &matches) {
     return prefix;
 }
 
-void print_completion_candidates(const std::vector<std::string> &matches) {
-    write(STDOUT_FILENO, "\n", 1);
-    for (const auto &m : matches) {
-        write(STDOUT_FILENO, m.c_str(), m.size());
-        write(STDOUT_FILENO, "  ", 2);
-    }
-    write(STDOUT_FILENO, "\n", 1);
-}
-
 } // namespace
 
-void handle_tab_completion(const shell::ShellState &state, std::string &buf,
-                           size_t &cursor) {
+CompletionResult complete_at_cursor(const shell::ShellState &state,
+                                    const std::string &buf, size_t cursor) {
     size_t token_start = get_current_token_start(buf, cursor);
     size_t token_end = get_current_token_end(buf, cursor);
     const bool command_position = is_command_position(buf, cursor);
@@ -106,28 +95,24 @@ void handle_tab_completion(const shell::ShellState &state, std::string &buf,
     }
 
     if (matches.empty()) {
-        return;
+        return {};
     }
 
     std::sort(matches.begin(), matches.end());
 
     if (matches.size() == 1) {
-        buf.replace(token_start, token_end - token_start, matches[0]);
-        cursor = token_start + matches[0].size();
-        shell::prompt::redraw_input_line(state, buf, cursor, false);
-        return;
+        return CompletionResult{CompletionAction::ReplaceToken, token_start,
+                                token_end, matches[0], {}};
     }
 
     std::string lcp = longest_common_prefix(matches);
     if (lcp.size() > token.size()) {
-        buf.replace(token_start, token_end - token_start, lcp);
-        cursor = token_start + lcp.size();
-        shell::prompt::redraw_input_line(state, buf, cursor, false);
-        return;
+        return CompletionResult{CompletionAction::ReplaceToken, token_start,
+                                token_end, lcp, {}};
     }
 
-    print_completion_candidates(matches);
-    shell::prompt::redraw_input_line(state, buf, cursor, true);
+    return CompletionResult{CompletionAction::ShowCandidates, token_start,
+                            token_end, "", std::move(matches)};
 }
 
 } // namespace features
