@@ -20,6 +20,7 @@ enum class KeyKind {
     Delete,
     ReadEof,
     Interrupted,
+    Resized,
     Ignored,
 };
 

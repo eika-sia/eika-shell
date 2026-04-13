@@ -1,5 +1,6 @@
 #include "key.hpp"
 
+#include "../../signals/signals.hpp"
 #include "./csi/csi.hpp"
 #include "./ss3/ss3.hpp"
 
@@ -51,6 +52,14 @@ KeyPress read_key() {
 
     if (n < 0) {
         if (errno == EINTR) {
+            if (shell::signals::g_input_interrupted != 0) {
+                shell::signals::g_input_interrupted = 0;
+                return make_key_press(KeyKind::Interrupted);
+            }
+            if (shell::signals::g_resize_pending != 0) {
+                shell::signals::g_resize_pending = 0;
+                return make_key_press(KeyKind::Resized);
+            }
             return make_key_press(KeyKind::Interrupted);
         }
         return make_key_press(KeyKind::Ignored);

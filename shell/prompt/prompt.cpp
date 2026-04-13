@@ -8,6 +8,7 @@
 #include <linux/limits.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <utility>
 
 namespace shell::prompt {
 namespace {
@@ -16,14 +17,6 @@ const std::string purple = "\033[1;35m";
 const std::string cyan = "\033[1;36m";
 const std::string reset = "\033[0m";
 constexpr size_t prompt_prefix_display_width = 4;
-
-struct InputRenderState {
-    std::string header_rendered;
-    size_t header_display_width = 0;
-    size_t input_length = 0;
-    size_t cursor_index = 0;
-    size_t terminal_columns = 80;
-};
 
 struct CursorGeometry {
     size_t row = 0;
@@ -36,8 +29,6 @@ struct RenderMetrics {
     size_t total_rows = 2;
     size_t cursor_row = 0;
 };
-
-InputRenderState g_input_render_state{};
 
 size_t get_terminal_columns() {
     struct winsize ws{};
@@ -85,34 +76,36 @@ size_t compute_rendered_rows(size_t base_column, size_t character_count,
            1;
 }
 
-void reset_input_render_state() { g_input_render_state = {}; }
-
-void update_input_render_state(std::string header_rendered,
-                               size_t header_display_width, size_t input_length,
-                               size_t cursor_index, size_t terminal_columns) {
-    g_input_render_state.header_rendered = header_rendered;
-    g_input_render_state.header_display_width = header_display_width;
-    g_input_render_state.input_length = input_length;
-    g_input_render_state.cursor_index = cursor_index;
-    g_input_render_state.terminal_columns = terminal_columns;
+void reset_input_render_state(InputRenderState &render_state) {
+    render_state = {};
 }
 
-RenderMetrics measure_render_state(size_t columns) {
+void update_input_render_state(InputRenderState &render_state,
+                               std::string header_rendered,
+                               size_t header_display_width, size_t input_length,
+                               size_t cursor_index, size_t terminal_columns) {
+    render_state.header_rendered = std::move(header_rendered);
+    render_state.header_display_width = header_display_width;
+    render_state.input_length = input_length;
+    render_state.cursor_index = cursor_index;
+    render_state.terminal_columns = terminal_columns;
+}
+
+RenderMetrics measure_render_state(const InputRenderState &render_state,
+                                   size_t columns) {
     const bool cursor_at_line_end =
-        g_input_render_state.cursor_index == g_input_render_state.input_length;
+        render_state.cursor_index == render_state.input_length;
 
     RenderMetrics metrics;
-    metrics.header_rows = compute_rendered_rows(
-        0, g_input_render_state.header_display_width, columns);
-    metrics.input_rows =
-        compute_rendered_rows(prompt_prefix_display_width,
-                              g_input_render_state.input_length, columns);
+    metrics.header_rows =
+        compute_rendered_rows(0, render_state.header_display_width, columns);
+    metrics.input_rows = compute_rendered_rows(
+        prompt_prefix_display_width, render_state.input_length, columns);
     metrics.total_rows = metrics.header_rows + metrics.input_rows;
-    metrics.cursor_row =
-        compute_cursor_geometry(prompt_prefix_display_width,
-                                g_input_render_state.cursor_index, columns,
-                                cursor_at_line_end)
-            .row;
+    metrics.cursor_row = compute_cursor_geometry(prompt_prefix_display_width,
+                                                 render_state.cursor_index,
+                                                 columns, cursor_at_line_end)
+                             .row;
     return metrics;
 }
 
@@ -139,15 +132,19 @@ std::string clear_render_block(size_t rows_above_cursor, size_t rows_to_clear) {
     return frame;
 }
 
-std::string clear_previous_input_block(size_t columns) {
-    const RenderMetrics metrics = measure_render_state(columns);
+std::string clear_previous_input_block(const InputRenderState &render_state,
+                                       size_t columns) {
+    const RenderMetrics metrics = measure_render_state(render_state, columns);
     return clear_render_block(metrics.cursor_row, metrics.input_rows);
 }
 
-std::string clear_previous_prompt_block(size_t old_columns,
+std::string clear_previous_prompt_block(const InputRenderState &render_state,
+                                        size_t old_columns,
                                         size_t new_columns) {
-    const RenderMetrics old_metrics = measure_render_state(old_columns);
-    const RenderMetrics new_metrics = measure_render_state(new_columns);
+    const RenderMetrics old_metrics =
+        measure_render_state(render_state, old_columns);
+    const RenderMetrics new_metrics =
+        measure_render_state(render_state, new_columns);
 
     return clear_render_block(
         new_metrics.cursor_row + new_metrics.header_rows,
@@ -158,24 +155,34 @@ std::string build_prompt_prefix() {
     return purple + std::string("╰─❯ ") + reset;
 }
 
+prompt_header::HeaderInfo build_header_info(const shell::ShellState &state) {
+    return prompt_header::build_header(state);
+}
+
 } // namespace
 
-std::string build_prompt(const shell::ShellState &state) {
-    const prompt_header::HeaderInfo header = prompt_header::build_header(state);
-    reset_input_render_state();
-    update_input_render_state(header.rendered, header.display_width, 0, 0,
+std::string build_prompt(const shell::ShellState &state,
+                         InputRenderState &render_state) {
+    const prompt_header::HeaderInfo header = build_header_info(state);
+    reset_input_render_state(render_state);
+    update_input_render_state(render_state, header.rendered,
+                              header.display_width, 0, 0,
                               get_terminal_columns());
     return header.rendered + "\n" + build_prompt_prefix();
 }
 
-void redraw_input_line(const shell::ShellState &state, const std::string &line,
+void redraw_input_line(InputRenderState &render_state,
+                       const shell::ShellState &state, const std::string &line,
                        size_t cursor, bool full_prompt) {
     const size_t columns = get_terminal_columns();
-    const bool terminal_resized =
-        columns != g_input_render_state.terminal_columns;
+    const bool terminal_resized = columns != render_state.terminal_columns;
     const bool redraw_full_prompt = full_prompt || terminal_resized;
-    const std::string header =
-        redraw_full_prompt ? g_input_render_state.header_rendered : "";
+    const prompt_header::HeaderInfo header_info =
+        redraw_full_prompt
+            ? build_header_info(state)
+            : prompt_header::HeaderInfo{render_state.header_rendered,
+                                        render_state.header_display_width};
+    const std::string header = redraw_full_prompt ? header_info.rendered : "";
     const std::string prefix = redraw_full_prompt
                                    ? header + "\n" + build_prompt_prefix()
                                    : build_prompt_prefix();
@@ -195,9 +202,9 @@ void redraw_input_line(const shell::ShellState &state, const std::string &line,
         frame = "\r\033[2K";
     } else if (terminal_resized) {
         frame = clear_previous_prompt_block(
-            g_input_render_state.terminal_columns, columns);
+            render_state, render_state.terminal_columns, columns);
     } else {
-        frame = clear_previous_input_block(columns);
+        frame = clear_previous_input_block(render_state, columns);
     }
     frame += prefix;
     frame += rendered;
@@ -211,25 +218,24 @@ void redraw_input_line(const shell::ShellState &state, const std::string &line,
     }
 
     write(STDOUT_FILENO, frame.c_str(), frame.size());
-    update_input_render_state(g_input_render_state.header_rendered,
-                              g_input_render_state.header_display_width,
-                              line.size(), clamped_cursor, columns);
+    update_input_render_state(render_state, header_info.rendered,
+                              header_info.display_width, line.size(),
+                              clamped_cursor, columns);
 }
 
-void finalize_interrupted_input_line() {
-    const size_t columns = g_input_render_state.terminal_columns;
+void finalize_interrupted_input_line(InputRenderState &render_state) {
+    const size_t columns = render_state.terminal_columns;
     const size_t cursor_row =
-        compute_cursor_geometry(prompt_prefix_display_width,
-                                g_input_render_state.cursor_index, columns,
-                                g_input_render_state.cursor_index ==
-                                    g_input_render_state.input_length)
+        compute_cursor_geometry(
+            prompt_prefix_display_width, render_state.cursor_index, columns,
+            render_state.cursor_index == render_state.input_length)
             .row;
-    const size_t end_row = g_input_render_state.input_length == 0
-                               ? 0
-                               : compute_render_end_geometry(
-                                     prompt_prefix_display_width,
-                                     g_input_render_state.input_length, columns)
-                                     .row;
+    const size_t end_row =
+        render_state.input_length == 0
+            ? 0
+            : compute_render_end_geometry(prompt_prefix_display_width,
+                                          render_state.input_length, columns)
+                  .row;
 
     std::string tail_newlines;
     for (size_t i = cursor_row; i < end_row; ++i) {
@@ -240,7 +246,7 @@ void finalize_interrupted_input_line() {
         write(STDOUT_FILENO, tail_newlines.c_str(), tail_newlines.size());
     }
 
-    reset_input_render_state();
+    reset_input_render_state(render_state);
 }
 
 } // namespace shell::prompt

@@ -8,6 +8,7 @@
 
 int main(int argc, char **argv) {
     shell::ShellState state;
+    shell::prompt::InputRenderState prompt_render_state;
     shell::init_shell(state);
 
     if (argc > 1) {
@@ -49,12 +50,13 @@ int main(int argc, char **argv) {
         process::cleanup_finished_processes(state);
 
         if (state.interactive) {
-            std::cout << shell::prompt::build_prompt(state);
+            std::cout << shell::prompt::build_prompt(state,
+                                                     prompt_render_state);
             std::cout.flush();
         }
 
         shell::input::InputResult input =
-            shell::input::read_command_line(state);
+            shell::input::read_command_line(state, prompt_render_state);
 
         if (input.interrupted) {
             continue;
