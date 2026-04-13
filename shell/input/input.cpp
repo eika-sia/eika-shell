@@ -1,6 +1,5 @@
 #include "input.hpp"
 
-#include <cerrno>
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -8,9 +7,10 @@
 #include <unistd.h>
 
 #include "../../features/completion/completion.hpp"
-#include "./editor_state/editor_state.hpp"
 #include "../prompt/prompt.hpp"
 #include "../shell.hpp"
+#include "./editor_state/editor_state.hpp"
+#include "./key/key.hpp"
 
 namespace shell::input {
 namespace {
@@ -45,71 +45,11 @@ void restore_input_mode(const struct termios &old_state) {
     }
 }
 
-// \033 escape sequence parsing (za strelice je lagano samo pomoicemo cursor
-// (isto esc seq) lijevo desno)
-void handle_escape_sequence(
-    const shell::ShellState &state, editor_state::LineBuffer &buffer,
-    editor_state::HistoryBrowseState &history_state) {
-    char seq[3];
-    if (read(STDIN_FILENO, &seq[0], 1) <= 0)
-        return;
-    if (read(STDIN_FILENO, &seq[1], 1) <= 0)
-        return;
-
-    if (seq[0] != '[') {
-        return;
-    }
-
-    switch (seq[1]) {
-    case 'A': { // Up
-        if (editor_state::browse_history_up(buffer, state.history,
-                                            history_state)) {
-            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
-                                             false);
-        }
-        break;
-    }
-
-    case 'B': { // Down
-        if (editor_state::browse_history_down(buffer, state.history,
-                                              history_state)) {
-            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
-                                             false);
-        }
-        break;
-    }
-
-    case 'C': { // Right
-        if (editor_state::move_cursor_right(buffer)) {
-            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
-                                             false);
-        }
-        break;
-    }
-
-    case 'D': { // Left
-        if (editor_state::move_cursor_left(buffer)) {
-            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
-                                             false);
-        }
-        break;
-    }
-    default:
-        break;
-    }
-
-    if (seq[1] == '3') {
-        if (read(STDIN_FILENO, &seq[2], 1) <= 0)
-            return;
-
-        if (seq[2] == '~') {
-            if (editor_state::erase_at_cursor(buffer, history_state,
-                                              state.history.size())) {
-                shell::prompt::redraw_input_line(state, buffer.text,
-                                                 buffer.cursor, false);
-            }
-        }
-    }
+void redraw_buffer(const shell::ShellState &state,
+                   const editor_state::LineBuffer &buffer,
+                   bool full_prompt = false) {
+    shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
+                                     full_prompt);
 }
 
 } // namespace
@@ -134,33 +74,28 @@ InputResult read_command_line(shell::ShellState &state) {
     editor_state::HistoryBrowseState history_state{};
     history_state.index = state.history.size();
 
-    char ch = '\0';
     struct termios old_state;
     const bool input_mode_enabled = enable_input_mode(old_state);
 
     while (true) {
-        ssize_t n = read(STDIN_FILENO, &ch, 1);
+        const key::KeyPress key_press = key::read_key();
 
-        if (n == 0) {
+        if (key_press.kind == key::KeyKind::ReadEof) {
             result.eof = true;
             break;
         }
 
-        if (n < 0) {
-            if (errno == EINTR) {
-                shell::prompt::finalize_interrupted_input_line();
-                result.interrupted = true;
-                break;
-            }
-            continue;
-        }
-
-        if (ch == '\n' || ch == '\r') {
-            write(STDOUT_FILENO, "\n", 1);
+        if (key_press.kind == key::KeyKind::Interrupted) {
+            shell::prompt::finalize_interrupted_input_line();
+            result.interrupted = true;
             break;
         }
 
-        if (ch == 4) { // Ctrl+D
+        switch (key_press.kind) {
+        case key::KeyKind::Enter:
+            write(STDOUT_FILENO, "\n", 1);
+            break;
+        case key::KeyKind::CtrlD:
             if (buffer.text.empty()) {
                 result.eof = true;
                 break;
@@ -168,58 +103,92 @@ InputResult read_command_line(shell::ShellState &state) {
 
             if (editor_state::erase_at_cursor(buffer, history_state,
                                               state.history.size())) {
-                shell::prompt::redraw_input_line(state, buffer.text,
-                                                 buffer.cursor, false);
+                redraw_buffer(state, buffer);
+            }
+            continue;
+        case key::KeyKind::ArrowUp:
+            if (editor_state::browse_history_up(buffer, state.history,
+                                                history_state)) {
+                redraw_buffer(state, buffer);
+            }
+            continue;
+        case key::KeyKind::ArrowDown:
+            if (editor_state::browse_history_down(buffer, state.history,
+                                                  history_state)) {
+                redraw_buffer(state, buffer);
+            }
+            continue;
+        case key::KeyKind::ArrowRight: {
+            bool moved = key::has_modifier(key_press, key::KeyModCtrl)
+                             ? editor_state::move_cursor_word_right(buffer)
+                             : editor_state::move_cursor_right(buffer);
+            if (moved) {
+                redraw_buffer(state, buffer);
             }
             continue;
         }
-
-        if (ch == '\033') {
-            handle_escape_sequence(state, buffer, history_state);
+        case key::KeyKind::ArrowLeft: {
+            bool moved = key::has_modifier(key_press, key::KeyModCtrl)
+                             ? editor_state::move_cursor_word_left(buffer)
+                             : editor_state::move_cursor_left(buffer);
+            if (moved) {
+                redraw_buffer(state, buffer);
+            }
             continue;
         }
+        case key::KeyKind::Home:
+        case key::KeyKind::Delete:
+            if (key_press.kind == key::KeyKind::Home) {
+                if (editor_state::move_cursor_home(buffer)) {
+                    redraw_buffer(state, buffer);
+                }
+                continue;
+            }
 
-        if (ch == 1) { // Ctrl+A
+            if (editor_state::erase_at_cursor(buffer, history_state,
+                                              state.history.size())) {
+                redraw_buffer(state, buffer);
+            }
+            continue;
+        case key::KeyKind::CtrlA:
             if (editor_state::move_cursor_home(buffer)) {
-                shell::prompt::redraw_input_line(state, buffer.text,
-                                                 buffer.cursor, false);
+                redraw_buffer(state, buffer);
             }
             continue;
-        }
-        if (ch == 5) { // Ctrl+E
+        case key::KeyKind::End:
+        case key::KeyKind::CtrlE:
             if (editor_state::move_cursor_end(buffer)) {
-                shell::prompt::redraw_input_line(state, buffer.text,
-                                                 buffer.cursor, false);
+                redraw_buffer(state, buffer);
             }
             continue;
-        }
-        if (ch == 12) { // Ctrl+L
+        case key::KeyKind::CtrlL: {
             const char *clear = "\033[2J\033[H";
             write(STDOUT_FILENO, clear, 7);
-            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
-                                             true);
+            redraw_buffer(state, buffer, true);
             continue;
         }
-
-        if (ch == '\t') {
+        case key::KeyKind::Tab:
             features::handle_tab_completion(state, buffer.text, buffer.cursor);
             continue;
-        }
-
-        if (ch == '\b' || ch == 127) { // backspace
+        case key::KeyKind::Backspace:
             if (editor_state::erase_before_cursor(buffer, history_state,
                                                   state.history.size())) {
-                shell::prompt::redraw_input_line(state, buffer.text,
-                                                 buffer.cursor, false);
+                redraw_buffer(state, buffer);
             }
+            continue;
+        case key::KeyKind::Character:
+            editor_state::insert_character(buffer, key_press.character,
+                                           history_state, state.history.size());
+            redraw_buffer(state, buffer);
+            continue;
+        case key::KeyKind::ReadEof:
+        case key::KeyKind::Interrupted:
+            break;
+        case key::KeyKind::Ignored:
             continue;
         }
 
-        // normal character insert
-        editor_state::insert_character(buffer, ch, history_state,
-                                       state.history.size());
-        shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
-                                         false);
+        break;
     }
 
     if (input_mode_enabled) {

@@ -19,6 +19,8 @@ struct HistoryBrowseState {
 
 bool move_cursor_left(LineBuffer &buffer);
 bool move_cursor_right(LineBuffer &buffer);
+bool move_cursor_word_left(LineBuffer &buffer);
+bool move_cursor_word_right(LineBuffer &buffer);
 bool move_cursor_home(LineBuffer &buffer);
 bool move_cursor_end(LineBuffer &buffer);
 

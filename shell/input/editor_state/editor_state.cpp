@@ -1,5 +1,7 @@
 #include "editor_state.hpp"
 
+#include "../../../features/shell_text/shell_text.hpp"
+
 namespace shell::input::editor_state {
 namespace {
 
@@ -39,6 +41,59 @@ bool move_cursor_right(LineBuffer &buffer) {
     return true;
 }
 
+bool move_cursor_word_left(LineBuffer &buffer) {
+    clamp_cursor(buffer);
+
+    if (buffer.cursor == 0) {
+        return false;
+    }
+
+    size_t cursor = buffer.cursor;
+    while (cursor > 0 &&
+           features::shell_text::is_shell_separator(buffer.text[cursor - 1])) {
+        --cursor;
+    }
+
+    while (cursor > 0 &&
+           !features::shell_text::is_shell_separator(buffer.text[cursor - 1])) {
+        --cursor;
+    }
+
+    if (cursor == buffer.cursor) {
+        return false;
+    }
+
+    buffer.cursor = cursor;
+    return true;
+}
+
+bool move_cursor_word_right(LineBuffer &buffer) {
+    clamp_cursor(buffer);
+
+    const size_t size = buffer.text.size();
+    if (buffer.cursor >= size) {
+        return false;
+    }
+
+    size_t cursor = buffer.cursor;
+    while (cursor < size &&
+           features::shell_text::is_shell_separator(buffer.text[cursor])) {
+        ++cursor;
+    }
+
+    while (cursor < size &&
+           !features::shell_text::is_shell_separator(buffer.text[cursor])) {
+        ++cursor;
+    }
+
+    if (cursor == buffer.cursor) {
+        return false;
+    }
+
+    buffer.cursor = cursor;
+    return true;
+}
+
 bool move_cursor_home(LineBuffer &buffer) {
     clamp_cursor(buffer);
     if (buffer.cursor == 0) {
@@ -60,8 +115,7 @@ bool move_cursor_end(LineBuffer &buffer) {
 }
 
 bool insert_character(LineBuffer &buffer, char ch,
-                      HistoryBrowseState &history_state,
-                      size_t history_size) {
+                      HistoryBrowseState &history_state, size_t history_size) {
     clamp_cursor(buffer);
     prepare_for_edit(history_state, history_size);
     buffer.text.insert(buffer.cursor, 1, ch);
