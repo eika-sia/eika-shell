@@ -6,9 +6,9 @@
 #include <string>
 #include <termios.h>
 #include <unistd.h>
-#include <vector>
 
 #include "../../features/completion/completion.hpp"
+#include "./editor_state/editor_state.hpp"
 #include "../prompt/prompt.hpp"
 #include "../shell.hpp"
 
@@ -47,11 +47,9 @@ void restore_input_mode(const struct termios &old_state) {
 
 // \033 escape sequence parsing (za strelice je lagano samo pomoicemo cursor
 // (isto esc seq) lijevo desno)
-void handle_escape_sequence(const shell::ShellState &state, std::string &buf,
-                            size_t &cursor,
-                            const std::vector<std::string> &hist,
-                            size_t &hist_index, std::string &draft,
-                            bool &browsing_history) {
+void handle_escape_sequence(
+    const shell::ShellState &state, editor_state::LineBuffer &buffer,
+    editor_state::HistoryBrowseState &history_state) {
     char seq[3];
     if (read(STDIN_FILENO, &seq[0], 1) <= 0)
         return;
@@ -64,55 +62,35 @@ void handle_escape_sequence(const shell::ShellState &state, std::string &buf,
 
     switch (seq[1]) {
     case 'A': { // Up
-        if (hist.empty()) {
-            return;
+        if (editor_state::browse_history_up(buffer, state.history,
+                                            history_state)) {
+            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
+                                             false);
         }
-
-        if (!browsing_history) {
-            draft = buf;
-            browsing_history = true;
-            hist_index = hist.size() - 1;
-        } else if (hist_index > 0) {
-            hist_index--;
-        }
-
-        buf = hist[hist_index];
-        cursor = buf.size();
-        shell::prompt::redraw_input_line(state, buf, cursor, false);
         break;
     }
 
     case 'B': { // Down
-        if (!browsing_history) {
-            return;
+        if (editor_state::browse_history_down(buffer, state.history,
+                                              history_state)) {
+            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
+                                             false);
         }
-
-        if (hist_index + 1 < hist.size()) {
-            hist_index++;
-            buf = hist[hist_index];
-        } else {
-            browsing_history = false;
-            hist_index = hist.size();
-            buf = draft;
-        }
-
-        cursor = buf.size();
-        shell::prompt::redraw_input_line(state, buf, cursor, false);
         break;
     }
 
     case 'C': { // Right
-        if (cursor < buf.size()) {
-            cursor++;
-            shell::prompt::redraw_input_line(state, buf, cursor, false);
+        if (editor_state::move_cursor_right(buffer)) {
+            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
+                                             false);
         }
         break;
     }
 
     case 'D': { // Left
-        if (cursor > 0) {
-            cursor--;
-            shell::prompt::redraw_input_line(state, buf, cursor, false);
+        if (editor_state::move_cursor_left(buffer)) {
+            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
+                                             false);
         }
         break;
     }
@@ -125,9 +103,10 @@ void handle_escape_sequence(const shell::ShellState &state, std::string &buf,
             return;
 
         if (seq[2] == '~') {
-            if (cursor < buf.size()) {
-                buf.erase(cursor, 1);
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
+            if (editor_state::erase_at_cursor(buffer, history_state,
+                                              state.history.size())) {
+                shell::prompt::redraw_input_line(state, buffer.text,
+                                                 buffer.cursor, false);
             }
         }
     }
@@ -151,14 +130,11 @@ InputResult read_command_line(shell::ShellState &state) {
     }
 
     InputResult result{};
-    std::string buf;
-    std::string draft;
+    editor_state::LineBuffer buffer{};
+    editor_state::HistoryBrowseState history_state{};
+    history_state.index = state.history.size();
 
     char ch = '\0';
-    size_t cursor = 0;
-    size_t hist_index = state.history.size();
-    bool browsing_history = false;
-
     struct termios old_state;
     const bool input_mode_enabled = enable_input_mode(old_state);
 
@@ -185,85 +161,71 @@ InputResult read_command_line(shell::ShellState &state) {
         }
 
         if (ch == 4) { // Ctrl+D
-            if (buf.empty()) {
+            if (buffer.text.empty()) {
                 result.eof = true;
                 break;
             }
 
-            if (cursor < buf.size()) {
-                if (browsing_history) {
-                    browsing_history = false;
-                    hist_index = state.history.size();
-                }
-
-                buf.erase(cursor, 1);
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
+            if (editor_state::erase_at_cursor(buffer, history_state,
+                                              state.history.size())) {
+                shell::prompt::redraw_input_line(state, buffer.text,
+                                                 buffer.cursor, false);
             }
             continue;
         }
 
         if (ch == '\033') {
-            handle_escape_sequence(state, buf, cursor, state.history, hist_index,
-                                   draft, browsing_history);
+            handle_escape_sequence(state, buffer, history_state);
             continue;
         }
 
         if (ch == 1) { // Ctrl+A
-            if (cursor > 0) {
-                cursor = 0;
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
+            if (editor_state::move_cursor_home(buffer)) {
+                shell::prompt::redraw_input_line(state, buffer.text,
+                                                 buffer.cursor, false);
             }
             continue;
         }
         if (ch == 5) { // Ctrl+E
-            size_t right = buf.size() - cursor;
-            if (right > 0) {
-                cursor = buf.size();
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
+            if (editor_state::move_cursor_end(buffer)) {
+                shell::prompt::redraw_input_line(state, buffer.text,
+                                                 buffer.cursor, false);
             }
             continue;
         }
         if (ch == 12) { // Ctrl+L
             const char *clear = "\033[2J\033[H";
             write(STDOUT_FILENO, clear, 7);
-            shell::prompt::redraw_input_line(state, buf, cursor, true);
+            shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
+                                             true);
             continue;
         }
 
         if (ch == '\t') {
-            features::handle_tab_completion(state, buf, cursor);
+            features::handle_tab_completion(state, buffer.text, buffer.cursor);
             continue;
         }
 
         if (ch == '\b' || ch == 127) { // backspace
-            if (cursor > 0) {
-                if (browsing_history) {
-                    browsing_history = false;
-                    hist_index = state.history.size();
-                }
-
-                buf.erase(cursor - 1, 1);
-                cursor--;
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
+            if (editor_state::erase_before_cursor(buffer, history_state,
+                                                  state.history.size())) {
+                shell::prompt::redraw_input_line(state, buffer.text,
+                                                 buffer.cursor, false);
             }
             continue;
         }
 
         // normal character insert
-        if (browsing_history) {
-            browsing_history = false;
-            hist_index = state.history.size();
-        }
-
-        buf.insert(cursor, 1, ch);
-        cursor++;
-        shell::prompt::redraw_input_line(state, buf, cursor, false);
+        editor_state::insert_character(buffer, ch, history_state,
+                                       state.history.size());
+        shell::prompt::redraw_input_line(state, buffer.text, buffer.cursor,
+                                         false);
     }
 
     if (input_mode_enabled) {
         restore_input_mode(old_state);
     }
-    result.line = buf;
+    result.line = buffer.text;
     return result;
 }
 
