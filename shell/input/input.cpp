@@ -134,6 +134,28 @@ void apply_erase_and_redraw(const shell::ShellState &state,
                                   history_size));
 }
 
+void apply_kill_and_redraw(const shell::ShellState &state,
+                           shell::prompt::InputRenderState &render_state,
+                           editor_state::LineBuffer &buffer,
+                           editor_state::HistoryBrowseState &history_state,
+                           size_t history_size,
+                           editor_state::Kill kill_action) {
+    redraw_if_changed(
+        state, render_state, buffer,
+        editor_state::apply_kill(buffer, kill_action, history_state,
+                                 history_size));
+}
+
+void yank_kill_buffer_and_redraw(
+    const shell::ShellState &state,
+    shell::prompt::InputRenderState &render_state,
+    editor_state::LineBuffer &buffer,
+    editor_state::HistoryBrowseState &history_state, size_t history_size) {
+    redraw_if_changed(state, render_state, buffer,
+                      editor_state::yank_kill_buffer(buffer, history_state,
+                                                     history_size));
+}
+
 void apply_history_navigation_and_redraw(
     const shell::ShellState &state,
     shell::prompt::InputRenderState &render_state,
@@ -224,9 +246,26 @@ handle_character_key(const shell::ShellState &state,
             apply_movement_and_redraw(state, render_state, buffer,
                                       editor_state::Movement::End);
             return KeyHandlingResult::ContinueLoop;
+        case 'k':
+            apply_kill_and_redraw(state, render_state, buffer, history_state,
+                                  history_size, editor_state::Kill::ToLineEnd);
+            return KeyHandlingResult::ContinueLoop;
         case 'l':
             shell::terminal::write_stdout("\033[2J\033[H");
             redraw_buffer(state, render_state, buffer, true);
+            return KeyHandlingResult::ContinueLoop;
+        case 'u':
+            apply_kill_and_redraw(state, render_state, buffer, history_state,
+                                  history_size,
+                                  editor_state::Kill::ToLineStart);
+            return KeyHandlingResult::ContinueLoop;
+        case 'w':
+            apply_kill_and_redraw(state, render_state, buffer, history_state,
+                                  history_size, editor_state::Kill::WordLeft);
+            return KeyHandlingResult::ContinueLoop;
+        case 'y':
+            yank_kill_buffer_and_redraw(state, render_state, buffer,
+                                        history_state, history_size);
             return KeyHandlingResult::ContinueLoop;
         default:
             break;
@@ -242,6 +281,10 @@ handle_character_key(const shell::ShellState &state,
         case 'f':
             apply_movement_and_redraw(state, render_state, buffer,
                                       editor_state::Movement::WordRight);
+            return KeyHandlingResult::ContinueLoop;
+        case 'd':
+            apply_kill_and_redraw(state, render_state, buffer, history_state,
+                                  history_size, editor_state::Kill::WordRight);
             return KeyHandlingResult::ContinueLoop;
         default:
             break;

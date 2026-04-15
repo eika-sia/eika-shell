@@ -1,6 +1,6 @@
 #include "editor_state.hpp"
 
-#include "../../../features/shell_text/shell_text.hpp"
+#include <cctype>
 
 namespace shell::input::editor_state {
 namespace {
@@ -17,6 +17,73 @@ void prepare_for_edit(HistoryBrowseState &history_state, size_t history_size) {
     }
 
     reset_history_browse(history_state, history_size);
+}
+
+bool is_editor_word_character(unsigned char ch) {
+    return std::isalnum(ch) != 0 || ch == '_';
+}
+
+size_t find_word_left_boundary(const LineBuffer &buffer) {
+    size_t cursor = buffer.cursor;
+    while (cursor > 0 &&
+           !is_editor_word_character(
+               static_cast<unsigned char>(buffer.text[cursor - 1]))) {
+        --cursor;
+    }
+
+    while (cursor > 0 &&
+           is_editor_word_character(
+               static_cast<unsigned char>(buffer.text[cursor - 1]))) {
+        --cursor;
+    }
+
+    return cursor;
+}
+
+size_t find_word_right_boundary(const LineBuffer &buffer) {
+    size_t cursor = buffer.cursor;
+    const size_t size = buffer.text.size();
+    while (cursor < size &&
+           !is_editor_word_character(
+               static_cast<unsigned char>(buffer.text[cursor]))) {
+        ++cursor;
+    }
+
+    while (cursor < size &&
+           is_editor_word_character(
+               static_cast<unsigned char>(buffer.text[cursor]))) {
+        ++cursor;
+    }
+
+    return cursor;
+}
+
+bool erase_range(LineBuffer &buffer, size_t erase_begin, size_t erase_end,
+                 HistoryBrowseState &history_state, size_t history_size,
+                 std::string *erased_text = nullptr) {
+    clamp_cursor(buffer);
+
+    const size_t clamped_begin =
+        erase_begin > buffer.text.size() ? buffer.text.size() : erase_begin;
+    size_t clamped_end =
+        erase_end > buffer.text.size() ? buffer.text.size() : erase_end;
+    if (clamped_end < clamped_begin) {
+        clamped_end = clamped_begin;
+    }
+
+    if (clamped_begin == clamped_end) {
+        return false;
+    }
+
+    prepare_for_edit(history_state, history_size);
+    if (erased_text != nullptr) {
+        *erased_text = buffer.text.substr(clamped_begin,
+                                          clamped_end - clamped_begin);
+    }
+
+    buffer.text.erase(clamped_begin, clamped_end - clamped_begin);
+    buffer.cursor = clamped_begin;
+    return true;
 }
 
 bool move_cursor_left(LineBuffer &buffer) {
@@ -41,22 +108,7 @@ bool move_cursor_right(LineBuffer &buffer) {
 
 bool move_cursor_word_left(LineBuffer &buffer) {
     clamp_cursor(buffer);
-
-    if (buffer.cursor == 0) {
-        return false;
-    }
-
-    size_t cursor = buffer.cursor;
-    while (cursor > 0 &&
-           features::shell_text::is_shell_separator(buffer.text[cursor - 1])) {
-        --cursor;
-    }
-
-    while (cursor > 0 &&
-           !features::shell_text::is_shell_separator(buffer.text[cursor - 1])) {
-        --cursor;
-    }
-
+    const size_t cursor = find_word_left_boundary(buffer);
     if (cursor == buffer.cursor) {
         return false;
     }
@@ -67,23 +119,7 @@ bool move_cursor_word_left(LineBuffer &buffer) {
 
 bool move_cursor_word_right(LineBuffer &buffer) {
     clamp_cursor(buffer);
-
-    const size_t size = buffer.text.size();
-    if (buffer.cursor >= size) {
-        return false;
-    }
-
-    size_t cursor = buffer.cursor;
-    while (cursor < size &&
-           features::shell_text::is_shell_separator(buffer.text[cursor])) {
-        ++cursor;
-    }
-
-    while (cursor < size &&
-           !features::shell_text::is_shell_separator(buffer.text[cursor])) {
-        ++cursor;
-    }
-
+    const size_t cursor = find_word_right_boundary(buffer);
     if (cursor == buffer.cursor) {
         return false;
     }
@@ -115,26 +151,15 @@ bool move_cursor_end(LineBuffer &buffer) {
 bool erase_before_cursor(LineBuffer &buffer, HistoryBrowseState &history_state,
                          size_t history_size) {
     clamp_cursor(buffer);
-    if (buffer.cursor == 0) {
-        return false;
-    }
-
-    prepare_for_edit(history_state, history_size);
-    buffer.text.erase(buffer.cursor - 1, 1);
-    --buffer.cursor;
-    return true;
+    return erase_range(buffer, buffer.cursor == 0 ? 0 : buffer.cursor - 1,
+                       buffer.cursor, history_state, history_size);
 }
 
 bool erase_at_cursor(LineBuffer &buffer, HistoryBrowseState &history_state,
                      size_t history_size) {
     clamp_cursor(buffer);
-    if (buffer.cursor >= buffer.text.size()) {
-        return false;
-    }
-
-    prepare_for_edit(history_state, history_size);
-    buffer.text.erase(buffer.cursor, 1);
-    return true;
+    return erase_range(buffer, buffer.cursor, buffer.cursor + 1, history_state,
+                       history_size);
 }
 
 bool browse_history_up(LineBuffer &buffer,
@@ -247,6 +272,38 @@ bool apply_erase(LineBuffer &buffer, Erase erase_action,
     }
 
     return false;
+}
+
+bool apply_kill(LineBuffer &buffer, Kill kill_action,
+                HistoryBrowseState &history_state, size_t history_size) {
+    clamp_cursor(buffer);
+
+    size_t kill_begin = buffer.cursor;
+    size_t kill_end = buffer.cursor;
+
+    switch (kill_action) {
+    case Kill::WordLeft:
+        kill_begin = find_word_left_boundary(buffer);
+        break;
+    case Kill::ToLineStart:
+        kill_begin = 0;
+        break;
+    case Kill::ToLineEnd:
+        kill_end = buffer.text.size();
+        break;
+    case Kill::WordRight:
+        kill_end = find_word_right_boundary(buffer);
+        break;
+    }
+
+    return erase_range(buffer, kill_begin, kill_end, history_state,
+                       history_size, &history_state.kill_buffer);
+}
+
+bool yank_kill_buffer(LineBuffer &buffer, HistoryBrowseState &history_state,
+                      size_t history_size) {
+    return insert_text(buffer, history_state.kill_buffer, history_state,
+                       history_size);
 }
 
 bool apply_history_navigation(LineBuffer &buffer, HistoryNavigation navigation,
