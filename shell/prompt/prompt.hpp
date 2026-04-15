@@ -11,8 +11,9 @@ namespace shell::prompt {
 struct InputRenderState {
     std::string header_rendered;
     size_t header_display_width = 0;
-    size_t input_length = 0;
-    size_t cursor_index = 0;
+    size_t prompt_prefix_display_width = 0;
+    size_t input_display_width = 0;
+    size_t cursor_display_width = 0;
     size_t terminal_columns = 80;
 };
 

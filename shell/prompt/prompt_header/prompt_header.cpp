@@ -1,5 +1,7 @@
 #include "prompt_header.hpp"
 
+#include "../render_utils.hpp"
+
 #include <cerrno>
 #include <fcntl.h>
 #include <linux/limits.h>
@@ -36,36 +38,6 @@ struct GitPromptInfo {
     int untracked = 0;
     int conflicted = 0;
 };
-
-size_t display_width(const std::string &text) {
-    size_t width = 0;
-
-    for (size_t i = 0; i < text.size();) {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
-
-        if (c == '\033') {
-            ++i;
-            if (i < text.size() && text[i] == '[') {
-                ++i;
-                while (i < text.size() &&
-                       !((text[i] >= '@' && text[i] <= '~'))) {
-                    ++i;
-                }
-                if (i < text.size()) {
-                    ++i;
-                }
-            }
-            continue;
-        }
-
-        if ((c & 0xC0) != 0x80) {
-            ++width;
-        }
-        ++i;
-    }
-
-    return width;
-}
 
 std::string trim_whitespace(const std::string &text) {
     const size_t start = text.find_first_not_of(" \t");
@@ -390,6 +362,6 @@ HeaderInfo build_header(const shell::ShellState &state) {
     if (!bg.empty())
         res += " " + bg;
 
-    return HeaderInfo{res, display_width(res)};
+    return HeaderInfo{res, render_utils::measure_display_width(res)};
 }
 } // namespace shell::prompt::prompt_header
