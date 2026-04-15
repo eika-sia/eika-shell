@@ -19,8 +19,6 @@ void prepare_for_edit(HistoryBrowseState &history_state, size_t history_size) {
     reset_history_browse(history_state, history_size);
 }
 
-} // namespace
-
 bool move_cursor_left(LineBuffer &buffer) {
     clamp_cursor(buffer);
     if (buffer.cursor == 0) {
@@ -114,15 +112,6 @@ bool move_cursor_end(LineBuffer &buffer) {
     return true;
 }
 
-bool insert_text(LineBuffer &buffer, const std::string &in,
-                 HistoryBrowseState &history_state, size_t history_size) {
-    clamp_cursor(buffer);
-    prepare_for_edit(history_state, history_size);
-    buffer.text.insert(buffer.cursor, in);
-    buffer.cursor += in.length();
-    return true;
-}
-
 bool erase_before_cursor(LineBuffer &buffer, HistoryBrowseState &history_state,
                          size_t history_size) {
     clamp_cursor(buffer);
@@ -185,6 +174,92 @@ bool browse_history_down(LineBuffer &buffer,
 
     buffer.cursor = buffer.text.size();
     return true;
+}
+
+} // namespace
+
+bool apply_movement(LineBuffer &buffer, Movement movement) {
+    switch (movement) {
+    case Movement::Left:
+        return move_cursor_left(buffer);
+    case Movement::Right:
+        return move_cursor_right(buffer);
+    case Movement::WordLeft:
+        return move_cursor_word_left(buffer);
+    case Movement::WordRight:
+        return move_cursor_word_right(buffer);
+    case Movement::Home:
+        return move_cursor_home(buffer);
+    case Movement::End:
+        return move_cursor_end(buffer);
+    }
+
+    return false;
+}
+
+bool insert_text(LineBuffer &buffer, const std::string &in,
+                 HistoryBrowseState &history_state, size_t history_size) {
+    if (in.empty()) {
+        return false;
+    }
+
+    clamp_cursor(buffer);
+    prepare_for_edit(history_state, history_size);
+    buffer.text.insert(buffer.cursor, in);
+    buffer.cursor += in.length();
+    return true;
+}
+
+bool replace_range(LineBuffer &buffer, size_t replace_begin, size_t replace_end,
+                   const std::string &replacement,
+                   HistoryBrowseState &history_state, size_t history_size) {
+    clamp_cursor(buffer);
+
+    const size_t clamped_begin =
+        replace_begin > buffer.text.size() ? buffer.text.size() : replace_begin;
+    size_t clamped_end =
+        replace_end > buffer.text.size() ? buffer.text.size() : replace_end;
+    if (clamped_end < clamped_begin) {
+        clamped_end = clamped_begin;
+    }
+
+    const size_t new_cursor = clamped_begin + replacement.size();
+    if (buffer.text.compare(clamped_begin, clamped_end - clamped_begin,
+                            replacement) == 0 &&
+        buffer.cursor == new_cursor) {
+        return false;
+    }
+
+    prepare_for_edit(history_state, history_size);
+    buffer.text.replace(clamped_begin, clamped_end - clamped_begin,
+                        replacement);
+    buffer.cursor = new_cursor;
+    return true;
+}
+
+bool apply_erase(LineBuffer &buffer, Erase erase_action,
+                 HistoryBrowseState &history_state, size_t history_size) {
+    switch (erase_action) {
+    case Erase::BeforeCursor:
+        return erase_before_cursor(buffer, history_state, history_size);
+    case Erase::AtCursor:
+        return erase_at_cursor(buffer, history_state, history_size);
+    }
+
+    return false;
+}
+
+bool apply_history_navigation(LineBuffer &buffer, HistoryNavigation navigation,
+                              const std::vector<std::string> &history,
+                              HistoryBrowseState &history_state) {
+    switch (navigation) {
+    case HistoryNavigation::Up:
+        return browse_history_up(buffer, history, history_state);
+    case HistoryNavigation::Down:
+        return browse_history_down(buffer, history, history_state);
+    }
+
+    return false;
 }
 
 void reset_history_browse(HistoryBrowseState &history_state,

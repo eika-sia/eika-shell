@@ -115,7 +115,7 @@ InputEvent decode(DecodeContext &context) {
 
     while (true) {
         if (!read_next_byte(context, final_byte)) {
-            return make_system_event(InputEventKind::Ignored);
+            return make_ignored_event();
         }
 
         if (is_csi_final_byte(final_byte)) {
@@ -124,13 +124,13 @@ InputEvent decode(DecodeContext &context) {
 
         parameter_text.push_back(final_byte);
         if (parameter_text.size() > 32) {
-            return make_system_event(InputEventKind::Ignored);
+            return make_ignored_event();
         }
     }
 
     std::vector<int> params;
     if (!parse_csi_parameters(parameter_text, params)) {
-        return make_system_event(InputEventKind::Ignored);
+        return make_ignored_event();
     }
 
     const unsigned modifiers = params.size() >= 2
@@ -139,40 +139,40 @@ InputEvent decode(DecodeContext &context) {
 
     switch (final_byte) {
     case 'A':
-        return make_key_event(EditorKey::ArrowUp, modifiers);
+        return make_special_key_event(EditorKey::ArrowUp, modifiers);
     case 'B':
-        return make_key_event(EditorKey::ArrowDown, modifiers);
+        return make_special_key_event(EditorKey::ArrowDown, modifiers);
     case 'C':
-        return make_key_event(EditorKey::ArrowRight, modifiers);
+        return make_special_key_event(EditorKey::ArrowRight, modifiers);
     case 'D':
-        return make_key_event(EditorKey::ArrowLeft, modifiers);
+        return make_special_key_event(EditorKey::ArrowLeft, modifiers);
     case 'H':
-        return make_key_event(EditorKey::Home, modifiers);
+        return make_special_key_event(EditorKey::Home, modifiers);
     case 'F':
-        return make_key_event(EditorKey::End, modifiers);
+        return make_special_key_event(EditorKey::End, modifiers);
     case '~':
         if (params.empty()) {
-            return make_system_event(InputEventKind::Ignored);
+            return make_ignored_event();
         }
 
         switch (params.front()) {
         case 1:
         case 7:
-            return make_key_event(EditorKey::Home, modifiers);
+            return make_special_key_event(EditorKey::Home, modifiers);
         case 3:
-            return make_key_event(EditorKey::Delete, modifiers);
+            return make_special_key_event(EditorKey::Delete, modifiers);
         case 4:
         case 8:
-            return make_key_event(EditorKey::End, modifiers);
+            return make_special_key_event(EditorKey::End, modifiers);
         case 200:
             return read_bracketed_paste(context);
         case 201:
-            return make_system_event(InputEventKind::Ignored);
+            return make_ignored_event();
         default:
-            return make_system_event(InputEventKind::Ignored);
+            return make_ignored_event();
         }
     default:
-        return make_system_event(InputEventKind::Ignored);
+        return make_ignored_event();
     }
 }
 

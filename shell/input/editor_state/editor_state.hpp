@@ -17,26 +17,38 @@ struct HistoryBrowseState {
     std::string draft;
 };
 
-bool move_cursor_left(LineBuffer &buffer);
-bool move_cursor_right(LineBuffer &buffer);
-bool move_cursor_word_left(LineBuffer &buffer);
-bool move_cursor_word_right(LineBuffer &buffer);
-bool move_cursor_home(LineBuffer &buffer);
-bool move_cursor_end(LineBuffer &buffer);
+enum class Movement {
+    Left,
+    Right,
+    WordLeft,
+    WordRight,
+    Home,
+    End,
+};
+
+enum class Erase {
+    BeforeCursor,
+    AtCursor,
+};
+
+enum class HistoryNavigation {
+    Up,
+    Down,
+};
+
+bool apply_movement(LineBuffer &buffer, Movement movement);
 
 bool insert_text(LineBuffer &buffer, const std::string &in,
                  HistoryBrowseState &history_state, size_t history_size);
-bool erase_before_cursor(LineBuffer &buffer, HistoryBrowseState &history_state,
-                         size_t history_size);
-bool erase_at_cursor(LineBuffer &buffer, HistoryBrowseState &history_state,
-                     size_t history_size);
+bool replace_range(LineBuffer &buffer, size_t replace_begin, size_t replace_end,
+                   const std::string &replacement,
+                   HistoryBrowseState &history_state, size_t history_size);
+bool apply_erase(LineBuffer &buffer, Erase erase_action,
+                 HistoryBrowseState &history_state, size_t history_size);
 
-bool browse_history_up(LineBuffer &buffer,
-                       const std::vector<std::string> &history,
-                       HistoryBrowseState &history_state);
-bool browse_history_down(LineBuffer &buffer,
-                         const std::vector<std::string> &history,
-                         HistoryBrowseState &history_state);
+bool apply_history_navigation(LineBuffer &buffer, HistoryNavigation navigation,
+                              const std::vector<std::string> &history,
+                              HistoryBrowseState &history_state);
 
 void reset_history_browse(HistoryBrowseState &history_state,
                           size_t history_size);

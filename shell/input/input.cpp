@@ -18,6 +18,12 @@
 namespace shell::input {
 namespace {
 
+enum class KeyHandlingResult {
+    ContinueLoop,
+    FinishInput,
+    Ignore,
+};
+
 struct InputSession {
     struct termios saved_state_{};
     bool active = false;
@@ -97,23 +103,77 @@ std::string normalize_paste_for_single_line(const std::string &text) {
     return normalized;
 }
 
+void redraw_if_changed(const shell::ShellState &state,
+                       shell::prompt::InputRenderState &render_state,
+                       const editor_state::LineBuffer &buffer, bool changed,
+                       bool full_prompt = false) {
+    if (!changed) {
+        return;
+    }
+
+    redraw_buffer(state, render_state, buffer, full_prompt);
+}
+
+void apply_movement_and_redraw(const shell::ShellState &state,
+                               shell::prompt::InputRenderState &render_state,
+                               editor_state::LineBuffer &buffer,
+                               editor_state::Movement movement) {
+    redraw_if_changed(state, render_state, buffer,
+                      editor_state::apply_movement(buffer, movement));
+}
+
+void apply_erase_and_redraw(const shell::ShellState &state,
+                            shell::prompt::InputRenderState &render_state,
+                            editor_state::LineBuffer &buffer,
+                            editor_state::HistoryBrowseState &history_state,
+                            size_t history_size,
+                            editor_state::Erase erase_action) {
+    redraw_if_changed(
+        state, render_state, buffer,
+        editor_state::apply_erase(buffer, erase_action, history_state,
+                                  history_size));
+}
+
+void apply_history_navigation_and_redraw(
+    const shell::ShellState &state,
+    shell::prompt::InputRenderState &render_state,
+    editor_state::LineBuffer &buffer,
+    editor_state::HistoryBrowseState &history_state,
+    editor_state::HistoryNavigation navigation) {
+    redraw_if_changed(
+        state, render_state, buffer,
+        editor_state::apply_history_navigation(buffer, navigation, state.history,
+                                               history_state));
+}
+
+void replace_range_and_redraw(const shell::ShellState &state,
+                              shell::prompt::InputRenderState &render_state,
+                              editor_state::LineBuffer &buffer,
+                              editor_state::HistoryBrowseState &history_state,
+                              size_t history_size, size_t replace_begin,
+                              size_t replace_end,
+                              const std::string &replacement) {
+    redraw_if_changed(state, render_state, buffer,
+                      editor_state::replace_range(
+                          buffer, replace_begin, replace_end, replacement,
+                          history_state, history_size));
+}
+
 void insert_input_text(const shell::ShellState &state,
                        shell::prompt::InputRenderState &render_state,
                        editor_state::LineBuffer &buffer,
                        editor_state::HistoryBrowseState &history_state,
-                       const std::string &text) {
-    if (text.empty()) {
-        return;
-    }
-
-    editor_state::insert_text(buffer, text, history_state,
-                              state.history.size());
-    redraw_buffer(state, render_state, buffer);
+                       size_t history_size, const std::string &text) {
+    const bool changed =
+        editor_state::insert_text(buffer, text, history_state, history_size);
+    redraw_if_changed(state, render_state, buffer, changed);
 }
 
 void handle_tab_completion(const shell::ShellState &state,
                            shell::prompt::InputRenderState &render_state,
-                           editor_state::LineBuffer &buffer) {
+                           editor_state::LineBuffer &buffer,
+                           editor_state::HistoryBrowseState &history_state,
+                           size_t history_size) {
     const features::CompletionResult completion =
         features::complete_at_cursor(state, buffer.text, buffer.cursor);
 
@@ -121,18 +181,155 @@ void handle_tab_completion(const shell::ShellState &state,
     case features::CompletionAction::None:
         return;
     case features::CompletionAction::ReplaceToken:
-        buffer.text.replace(completion.replace_begin,
-                            completion.replace_end - completion.replace_begin,
-                            completion.replacement);
-        buffer.cursor =
-            completion.replace_begin + completion.replacement.size();
-        redraw_buffer(state, render_state, buffer);
+        replace_range_and_redraw(state, render_state, buffer, history_state,
+                                 history_size, completion.replace_begin,
+                                 completion.replace_end,
+                                 completion.replacement);
         return;
     case features::CompletionAction::ShowCandidates:
         print_completion_candidates(completion.candidates);
         redraw_buffer(state, render_state, buffer, true);
         return;
     }
+}
+
+KeyHandlingResult
+handle_character_key(const shell::ShellState &state,
+                     shell::prompt::InputRenderState &render_state,
+                     editor_state::LineBuffer &buffer,
+                     editor_state::HistoryBrowseState &history_state,
+                     size_t history_size, const key::InputEvent &event,
+                     InputResult &result) {
+    if (event.key != key::EditorKey::Character) {
+        return KeyHandlingResult::Ignore;
+    }
+
+    const char binding = event.key_character;
+    if (key::has_modifier(event, key::KeyModCtrl)) {
+        switch (binding) {
+        case 'a':
+            apply_movement_and_redraw(state, render_state, buffer,
+                                      editor_state::Movement::Home);
+            return KeyHandlingResult::ContinueLoop;
+        case 'd':
+            if (buffer.text.empty()) {
+                result.eof = true;
+                return KeyHandlingResult::FinishInput;
+            }
+
+            apply_erase_and_redraw(state, render_state, buffer, history_state,
+                                   history_size, editor_state::Erase::AtCursor);
+            return KeyHandlingResult::ContinueLoop;
+        case 'e':
+            apply_movement_and_redraw(state, render_state, buffer,
+                                      editor_state::Movement::End);
+            return KeyHandlingResult::ContinueLoop;
+        case 'l':
+            shell::terminal::write_stdout("\033[2J\033[H");
+            redraw_buffer(state, render_state, buffer, true);
+            return KeyHandlingResult::ContinueLoop;
+        default:
+            break;
+        }
+    }
+
+    if (key::has_modifier(event, key::KeyModAlt)) {
+        switch (binding) {
+        case 'b':
+            apply_movement_and_redraw(state, render_state, buffer,
+                                      editor_state::Movement::WordLeft);
+            return KeyHandlingResult::ContinueLoop;
+        case 'f':
+            apply_movement_and_redraw(state, render_state, buffer,
+                                      editor_state::Movement::WordRight);
+            return KeyHandlingResult::ContinueLoop;
+        default:
+            break;
+        }
+    }
+
+    return KeyHandlingResult::Ignore;
+}
+
+KeyHandlingResult
+handle_special_key(const shell::ShellState &state,
+                   shell::prompt::InputRenderState &render_state,
+                   editor_state::LineBuffer &buffer,
+                   editor_state::HistoryBrowseState &history_state,
+                   size_t history_size, const key::InputEvent &event) {
+    switch (event.key) {
+    case key::EditorKey::Character:
+        return KeyHandlingResult::Ignore;
+    case key::EditorKey::Escape:
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::Enter:
+        shell::terminal::write_stdout_line("");
+        return KeyHandlingResult::FinishInput;
+    case key::EditorKey::Tab:
+        handle_tab_completion(state, render_state, buffer, history_state,
+                              history_size);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::Backspace:
+        apply_erase_and_redraw(state, render_state, buffer, history_state,
+                               history_size, editor_state::Erase::BeforeCursor);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::Delete:
+        apply_erase_and_redraw(state, render_state, buffer, history_state,
+                               history_size, editor_state::Erase::AtCursor);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::ArrowUp:
+        apply_history_navigation_and_redraw(
+            state, render_state, buffer, history_state,
+            editor_state::HistoryNavigation::Up);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::ArrowDown:
+        apply_history_navigation_and_redraw(
+            state, render_state, buffer, history_state,
+            editor_state::HistoryNavigation::Down);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::ArrowRight:
+        apply_movement_and_redraw(
+            state, render_state, buffer,
+            key::has_modifier(event, key::KeyModCtrl)
+                ? editor_state::Movement::WordRight
+                : editor_state::Movement::Right);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::ArrowLeft:
+        apply_movement_and_redraw(
+            state, render_state, buffer,
+            key::has_modifier(event, key::KeyModCtrl)
+                ? editor_state::Movement::WordLeft
+                : editor_state::Movement::Left);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::Home:
+        apply_movement_and_redraw(state, render_state, buffer,
+                                  editor_state::Movement::Home);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::End:
+        apply_movement_and_redraw(state, render_state, buffer,
+                                  editor_state::Movement::End);
+        return KeyHandlingResult::ContinueLoop;
+    }
+
+    return KeyHandlingResult::Ignore;
+}
+
+KeyHandlingResult
+handle_key_event(const shell::ShellState &state,
+                 shell::prompt::InputRenderState &render_state,
+                 editor_state::LineBuffer &buffer,
+                 editor_state::HistoryBrowseState &history_state,
+                 size_t history_size, const key::InputEvent &event,
+                 InputResult &result) {
+    const KeyHandlingResult character_result = handle_character_key(
+        state, render_state, buffer, history_state, history_size, event,
+        result);
+    if (character_result != KeyHandlingResult::Ignore) {
+        return character_result;
+    }
+
+    return handle_special_key(state, render_state, buffer, history_state,
+                              history_size, event);
 }
 
 InputResult read_interactive_fallback_command_line() {
@@ -188,7 +385,8 @@ InputResult read_command_line(shell::ShellState &state,
     InputResult result{};
     editor_state::LineBuffer buffer{};
     editor_state::HistoryBrowseState history_state{};
-    history_state.index = state.history.size();
+    const size_t history_size = state.history.size();
+    history_state.index = history_size;
 
     InputSession input_session{};
     if (!begin_input_session(input_session)) {
@@ -212,103 +410,31 @@ InputResult read_command_line(shell::ShellState &state,
         switch (event.kind) {
         case key::InputEventKind::TextInput:
             insert_input_text(state, render_state, buffer, history_state,
-                              event.text);
+                              history_size, event.text);
             continue;
         case key::InputEventKind::Paste:
             insert_input_text(state, render_state, buffer, history_state,
+                              history_size,
                               normalize_paste_for_single_line(event.text));
             continue;
-        case key::InputEventKind::Key:
-            switch (event.key) {
-            case key::EditorKey::Enter:
-                shell::terminal::write_stdout_line("");
+        case key::InputEventKind::Key: {
+            switch (handle_key_event(state, render_state, buffer, history_state,
+                                     history_size, event, result)) {
+            case KeyHandlingResult::ContinueLoop:
+            case KeyHandlingResult::Ignore:
+                continue;
+            case KeyHandlingResult::FinishInput:
                 break;
-            case key::EditorKey::CtrlD:
-                if (buffer.text.empty()) {
-                    result.eof = true;
-                    break;
-                }
-
-                if (editor_state::erase_at_cursor(buffer, history_state,
-                                                  state.history.size())) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
-            case key::EditorKey::ArrowUp:
-                if (editor_state::browse_history_up(buffer, state.history,
-                                                    history_state)) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
-            case key::EditorKey::ArrowDown:
-                if (editor_state::browse_history_down(buffer, state.history,
-                                                      history_state)) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
-            case key::EditorKey::ArrowRight: {
-                bool moved = key::has_modifier(event, key::KeyModCtrl)
-                                 ? editor_state::move_cursor_word_right(buffer)
-                                 : editor_state::move_cursor_right(buffer);
-                if (moved) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
-            }
-            case key::EditorKey::ArrowLeft: {
-                bool moved = key::has_modifier(event, key::KeyModCtrl)
-                                 ? editor_state::move_cursor_word_left(buffer)
-                                 : editor_state::move_cursor_left(buffer);
-                if (moved) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
-            }
-            case key::EditorKey::Home:
-                if (editor_state::move_cursor_home(buffer)) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
-            case key::EditorKey::Delete:
-                if (editor_state::erase_at_cursor(buffer, history_state,
-                                                  state.history.size())) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
-            case key::EditorKey::CtrlA:
-                if (editor_state::move_cursor_home(buffer)) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
-            case key::EditorKey::End:
-            case key::EditorKey::CtrlE:
-                if (editor_state::move_cursor_end(buffer)) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
-            case key::EditorKey::CtrlL:
-                shell::terminal::write_stdout("\033[2J\033[H");
-                redraw_buffer(state, render_state, buffer, true);
-                continue;
-            case key::EditorKey::Tab:
-                handle_tab_completion(state, render_state, buffer);
-                continue;
-            case key::EditorKey::Backspace:
-                if (editor_state::erase_before_cursor(buffer, history_state,
-                                                      state.history.size())) {
-                    redraw_buffer(state, render_state, buffer);
-                }
-                continue;
             }
             break;
+        }
         case key::InputEventKind::Resized:
             redraw_buffer(state, render_state, buffer);
             continue;
-        case key::InputEventKind::ReadEof:
-        case key::InputEventKind::Interrupted:
-            break;
         case key::InputEventKind::Ignored:
             continue;
+        default:
+            break;
         }
 
         break;
