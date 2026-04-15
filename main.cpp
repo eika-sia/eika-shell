@@ -2,6 +2,7 @@
 #include "shell/input/input.hpp"
 #include "shell/prompt/prompt.hpp"
 #include "shell/shell.hpp"
+#include "shell/terminal/terminal.hpp"
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -50,9 +51,8 @@ int main(int argc, char **argv) {
         process::cleanup_finished_processes(state);
 
         if (state.interactive) {
-            std::cout << shell::prompt::build_prompt(state,
-                                                     prompt_render_state);
-            std::cout.flush();
+            shell::terminal::write_stdout(
+                shell::prompt::build_prompt(state, prompt_render_state));
         }
 
         shell::input::InputResult input =
@@ -62,8 +62,7 @@ int main(int argc, char **argv) {
             continue;
         }
         if (input.eof) {
-            std::cout << "exit" << '\n';
-            std::cout.flush();
+            shell::terminal::write_stdout_line("exit");
             shell::execute_command_line(state, "exit");
             break;
         }

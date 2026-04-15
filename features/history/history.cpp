@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "../../builtins/env/env.hpp"
+#include "../../shell/terminal/terminal.hpp"
 #include "../shell_text/shell_text.hpp"
 
 namespace features {
@@ -159,7 +160,7 @@ bool expand_history(shell::ShellState &state, std::string &line) {
 
     if (!replacements.empty()) {
         line = shell_text::apply_replacements(line, replacements);
-        std::cout << line << std::endl;
+        shell::terminal::write_stdout_line(line);
     }
 
     return true;

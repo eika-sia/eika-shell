@@ -11,6 +11,7 @@
 #include "../prompt/prompt.hpp"
 #include "../shell.hpp"
 #include "../signals/signals.hpp"
+#include "../terminal/terminal.hpp"
 #include "./editor_state/editor_state.hpp"
 #include "./key/key.hpp"
 
@@ -65,12 +66,11 @@ void redraw_buffer(const shell::ShellState &state,
 }
 
 void print_completion_candidates(const std::vector<std::string> &candidates) {
-    write(STDOUT_FILENO, "\n", 1);
+    shell::terminal::write_stdout_line("");
     for (const std::string &candidate : candidates) {
-        write(STDOUT_FILENO, candidate.c_str(), candidate.size());
-        write(STDOUT_FILENO, "  ", 2);
+        shell::terminal::write_stdout(candidate + "  ");
     }
-    write(STDOUT_FILENO, "\n", 1);
+    shell::terminal::write_stdout_line("");
 }
 
 void handle_tab_completion(const shell::ShellState &state,
@@ -173,7 +173,7 @@ InputResult read_command_line(shell::ShellState &state,
 
         switch (key_press.kind) {
         case key::KeyKind::Enter:
-            write(STDOUT_FILENO, "\n", 1);
+            shell::terminal::write_stdout_line("");
             break;
         case key::KeyKind::CtrlD:
             if (buffer.text.empty()) {
@@ -242,8 +242,7 @@ InputResult read_command_line(shell::ShellState &state,
             }
             continue;
         case key::KeyKind::CtrlL: {
-            const char *clear = "\033[2J\033[H";
-            write(STDOUT_FILENO, clear, 7);
+            shell::terminal::write_stdout("\033[2J\033[H");
             redraw_buffer(state, render_state, buffer, true);
             continue;
         }

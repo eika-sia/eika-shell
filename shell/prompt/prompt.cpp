@@ -2,6 +2,7 @@
 
 #include "../../features/highlighting/highlighting.hpp"
 #include "../shell.hpp"
+#include "../terminal/terminal.hpp"
 #include "./prompt_header/prompt_header.hpp"
 #include "./render_utils.hpp"
 
@@ -177,7 +178,7 @@ void redraw_input_line(InputRenderState &render_state,
         frame += "\033[" + std::to_string(cursor_geometry.column) + "C";
     }
 
-    write(STDOUT_FILENO, frame.c_str(), frame.size());
+    shell::terminal::write_stdout(frame);
     update_input_render_state(render_state, header_info.rendered,
                               header_info.display_width,
                               prefix_info.display_width, line_display_width,
@@ -205,7 +206,7 @@ void finalize_interrupted_input_line(InputRenderState &render_state) {
     }
 
     if (!tail_newlines.empty()) {
-        write(STDOUT_FILENO, tail_newlines.c_str(), tail_newlines.size());
+        shell::terminal::write_stdout(tail_newlines);
     }
 
     reset_input_render_state(render_state);
