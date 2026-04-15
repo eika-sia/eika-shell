@@ -46,8 +46,8 @@ size_t measure_display_width(const std::string &text) {
 }
 
 RenderedFragment make_rendered_fragment(std::string rendered) {
-    return RenderedFragment{std::move(rendered),
-                            measure_display_width(rendered)};
+    const size_t display_width = measure_display_width(rendered);
+    return RenderedFragment{std::move(rendered), display_width};
 }
 
 CursorGeometry compute_render_end_geometry(size_t base_column,
