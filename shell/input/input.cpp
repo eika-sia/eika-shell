@@ -10,25 +10,40 @@
 #include "../../features/completion/completion.hpp"
 #include "../prompt/prompt.hpp"
 #include "../shell.hpp"
+#include "../signals/signals.hpp"
 #include "./editor_state/editor_state.hpp"
 #include "./key/key.hpp"
 
 namespace shell::input {
 namespace {
 
-// helper funckije za manual handling stvari (enable/disable jer zelimo da drugi
-// programi budu normalni)
-bool enable_input_mode(struct termios &old_state) {
-    if (tcgetattr(STDIN_FILENO, &old_state) == -1) {
+struct InputSession {
+    struct termios saved_state_{};
+    bool active = false;
+
+    ~InputSession() {
+        if (!active) {
+            return;
+        }
+
+        if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_state_) == -1) {
+            perror("tcsetattr");
+        }
+        active = false;
+    }
+};
+
+bool begin_input_session(InputSession &session) {
+    session.active = false;
+
+    if (tcgetattr(STDIN_FILENO, &session.saved_state_) == -1) {
         perror("tcgetattr");
         return false;
     }
 
-    struct termios raw = old_state;
-
+    struct termios raw = session.saved_state_;
     raw.c_lflag &= ~ICANON;
     raw.c_lflag &= ~ECHO;
-
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
 
@@ -37,13 +52,8 @@ bool enable_input_mode(struct termios &old_state) {
         return false;
     }
 
+    session.active = true;
     return true;
-}
-
-void restore_input_mode(const struct termios &old_state) {
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_state) == -1) {
-        perror("tcsetattr");
-    }
 }
 
 void redraw_buffer(const shell::ShellState &state,
@@ -87,6 +97,38 @@ void handle_tab_completion(const shell::ShellState &state,
     }
 }
 
+InputResult read_interactive_fallback_command_line() {
+    InputResult result{};
+
+    while (true) {
+        if (std::getline(std::cin, result.line)) {
+            return result;
+        }
+
+        if (shell::signals::g_input_interrupted != 0) {
+            shell::signals::g_input_interrupted = 0;
+            std::cin.clear();
+            result.interrupted = true;
+            return result;
+        }
+
+        if (shell::signals::g_resize_pending != 0) {
+            shell::signals::g_resize_pending = 0;
+            std::cin.clear();
+            continue;
+        }
+
+        if (std::cin.eof()) {
+            result.eof = true;
+            return result;
+        }
+
+        std::cin.clear();
+        result.eof = true;
+        return result;
+    }
+}
+
 } // namespace
 
 InputResult read_non_interactive_command_line() {
@@ -110,8 +152,10 @@ InputResult read_command_line(shell::ShellState &state,
     editor_state::HistoryBrowseState history_state{};
     history_state.index = state.history.size();
 
-    struct termios old_state;
-    const bool input_mode_enabled = enable_input_mode(old_state);
+    InputSession input_session{};
+    if (!begin_input_session(input_session)) {
+        return read_interactive_fallback_command_line();
+    }
 
     while (true) {
         const key::KeyPress key_press = key::read_key();
@@ -230,9 +274,6 @@ InputResult read_command_line(shell::ShellState &state,
         break;
     }
 
-    if (input_mode_enabled) {
-        restore_input_mode(old_state);
-    }
     result.line = buffer.text;
     return result;
 }
