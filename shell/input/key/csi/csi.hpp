@@ -4,6 +4,6 @@
 
 namespace shell::input::key::csi {
 
-KeyPress decode(DecodeContext &context);
+InputEvent decode(DecodeContext &context);
 
 } // namespace shell::input::key::csi

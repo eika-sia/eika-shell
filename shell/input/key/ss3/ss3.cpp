@@ -2,27 +2,27 @@
 
 namespace shell::input::key::ss3 {
 
-KeyPress decode(DecodeContext &context) {
+InputEvent decode(DecodeContext &context) {
     char final_byte = '\0';
     if (!read_next_byte(context, final_byte)) {
-        return make_key_press(KeyKind::Ignored);
+        return make_system_event(InputEventKind::Ignored);
     }
 
     switch (final_byte) {
     case 'A':
-        return make_key_press(KeyKind::ArrowUp);
+        return make_key_event(EditorKey::ArrowUp);
     case 'B':
-        return make_key_press(KeyKind::ArrowDown);
+        return make_key_event(EditorKey::ArrowDown);
     case 'C':
-        return make_key_press(KeyKind::ArrowRight);
+        return make_key_event(EditorKey::ArrowRight);
     case 'D':
-        return make_key_press(KeyKind::ArrowLeft);
+        return make_key_event(EditorKey::ArrowLeft);
     case 'H':
-        return make_key_press(KeyKind::Home);
+        return make_key_event(EditorKey::Home);
     case 'F':
-        return make_key_press(KeyKind::End);
+        return make_key_event(EditorKey::End);
     default:
-        return make_key_press(KeyKind::Ignored);
+        return make_system_event(InputEventKind::Ignored);
     }
 }
 

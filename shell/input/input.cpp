@@ -73,6 +73,44 @@ void print_completion_candidates(const std::vector<std::string> &candidates) {
     shell::terminal::write_stdout_line("");
 }
 
+std::string normalize_paste_for_single_line(const std::string &text) {
+    std::string normalized;
+    normalized.reserve(text.size());
+
+    for (unsigned char ch : text) {
+        switch (ch) {
+        case '\r':
+        case '\n':
+        case '\t':
+        case '\v':
+        case '\f':
+            normalized.push_back(' ');
+            break;
+        default:
+            if (ch >= 32U && ch != 127U) {
+                normalized.push_back(static_cast<char>(ch));
+            }
+            break;
+        }
+    }
+
+    return normalized;
+}
+
+void insert_input_text(const shell::ShellState &state,
+                       shell::prompt::InputRenderState &render_state,
+                       editor_state::LineBuffer &buffer,
+                       editor_state::HistoryBrowseState &history_state,
+                       const std::string &text) {
+    if (text.empty()) {
+        return;
+    }
+
+    editor_state::insert_text(buffer, text, history_state,
+                              state.history.size());
+    redraw_buffer(state, render_state, buffer);
+}
+
 void handle_tab_completion(const shell::ShellState &state,
                            shell::prompt::InputRenderState &render_state,
                            editor_state::LineBuffer &buffer) {
@@ -158,115 +196,118 @@ InputResult read_command_line(shell::ShellState &state,
     }
 
     while (true) {
-        const key::KeyPress key_press = key::read_key();
+        const key::InputEvent event = key::read_event();
 
-        if (key_press.kind == key::KeyKind::ReadEof) {
+        if (event.kind == key::InputEventKind::ReadEof) {
             result.eof = true;
             break;
         }
 
-        if (key_press.kind == key::KeyKind::Interrupted) {
+        if (event.kind == key::InputEventKind::Interrupted) {
             shell::prompt::finalize_interrupted_input_line(render_state);
             result.interrupted = true;
             break;
         }
 
-        switch (key_press.kind) {
-        case key::KeyKind::Enter:
-            shell::terminal::write_stdout_line("");
-            break;
-        case key::KeyKind::CtrlD:
-            if (buffer.text.empty()) {
-                result.eof = true;
+        switch (event.kind) {
+        case key::InputEventKind::TextInput:
+            insert_input_text(state, render_state, buffer, history_state,
+                              event.text);
+            continue;
+        case key::InputEventKind::Paste:
+            insert_input_text(state, render_state, buffer, history_state,
+                              normalize_paste_for_single_line(event.text));
+            continue;
+        case key::InputEventKind::Key:
+            switch (event.key) {
+            case key::EditorKey::Enter:
+                shell::terminal::write_stdout_line("");
                 break;
-            }
+            case key::EditorKey::CtrlD:
+                if (buffer.text.empty()) {
+                    result.eof = true;
+                    break;
+                }
 
-            if (editor_state::erase_at_cursor(buffer, history_state,
-                                              state.history.size())) {
-                redraw_buffer(state, render_state, buffer);
-            }
-            continue;
-        case key::KeyKind::ArrowUp:
-            if (editor_state::browse_history_up(buffer, state.history,
-                                                history_state)) {
-                redraw_buffer(state, render_state, buffer);
-            }
-            continue;
-        case key::KeyKind::ArrowDown:
-            if (editor_state::browse_history_down(buffer, state.history,
-                                                  history_state)) {
-                redraw_buffer(state, render_state, buffer);
-            }
-            continue;
-        case key::KeyKind::ArrowRight: {
-            bool moved = key::has_modifier(key_press, key::KeyModCtrl)
-                             ? editor_state::move_cursor_word_right(buffer)
-                             : editor_state::move_cursor_right(buffer);
-            if (moved) {
-                redraw_buffer(state, render_state, buffer);
-            }
-            continue;
-        }
-        case key::KeyKind::ArrowLeft: {
-            bool moved = key::has_modifier(key_press, key::KeyModCtrl)
-                             ? editor_state::move_cursor_word_left(buffer)
-                             : editor_state::move_cursor_left(buffer);
-            if (moved) {
-                redraw_buffer(state, render_state, buffer);
-            }
-            continue;
-        }
-        case key::KeyKind::Home:
-        case key::KeyKind::Delete:
-            if (key_press.kind == key::KeyKind::Home) {
-                if (editor_state::move_cursor_home(buffer)) {
+                if (editor_state::erase_at_cursor(buffer, history_state,
+                                                  state.history.size())) {
+                    redraw_buffer(state, render_state, buffer);
+                }
+                continue;
+            case key::EditorKey::ArrowUp:
+                if (editor_state::browse_history_up(buffer, state.history,
+                                                    history_state)) {
+                    redraw_buffer(state, render_state, buffer);
+                }
+                continue;
+            case key::EditorKey::ArrowDown:
+                if (editor_state::browse_history_down(buffer, state.history,
+                                                      history_state)) {
+                    redraw_buffer(state, render_state, buffer);
+                }
+                continue;
+            case key::EditorKey::ArrowRight: {
+                bool moved = key::has_modifier(event, key::KeyModCtrl)
+                                 ? editor_state::move_cursor_word_right(buffer)
+                                 : editor_state::move_cursor_right(buffer);
+                if (moved) {
                     redraw_buffer(state, render_state, buffer);
                 }
                 continue;
             }
-
-            if (editor_state::erase_at_cursor(buffer, history_state,
-                                              state.history.size())) {
-                redraw_buffer(state, render_state, buffer);
+            case key::EditorKey::ArrowLeft: {
+                bool moved = key::has_modifier(event, key::KeyModCtrl)
+                                 ? editor_state::move_cursor_word_left(buffer)
+                                 : editor_state::move_cursor_left(buffer);
+                if (moved) {
+                    redraw_buffer(state, render_state, buffer);
+                }
+                continue;
             }
-            continue;
-        case key::KeyKind::CtrlA:
-            if (editor_state::move_cursor_home(buffer)) {
-                redraw_buffer(state, render_state, buffer);
-            }
-            continue;
-        case key::KeyKind::End:
-        case key::KeyKind::CtrlE:
-            if (editor_state::move_cursor_end(buffer)) {
-                redraw_buffer(state, render_state, buffer);
-            }
-            continue;
-        case key::KeyKind::CtrlL: {
-            shell::terminal::write_stdout("\033[2J\033[H");
-            redraw_buffer(state, render_state, buffer, true);
-            continue;
-        }
-        case key::KeyKind::Tab:
-            handle_tab_completion(state, render_state, buffer);
-            continue;
-        case key::KeyKind::Backspace:
-            if (editor_state::erase_before_cursor(buffer, history_state,
+            case key::EditorKey::Home:
+                if (editor_state::move_cursor_home(buffer)) {
+                    redraw_buffer(state, render_state, buffer);
+                }
+                continue;
+            case key::EditorKey::Delete:
+                if (editor_state::erase_at_cursor(buffer, history_state,
                                                   state.history.size())) {
-                redraw_buffer(state, render_state, buffer);
+                    redraw_buffer(state, render_state, buffer);
+                }
+                continue;
+            case key::EditorKey::CtrlA:
+                if (editor_state::move_cursor_home(buffer)) {
+                    redraw_buffer(state, render_state, buffer);
+                }
+                continue;
+            case key::EditorKey::End:
+            case key::EditorKey::CtrlE:
+                if (editor_state::move_cursor_end(buffer)) {
+                    redraw_buffer(state, render_state, buffer);
+                }
+                continue;
+            case key::EditorKey::CtrlL:
+                shell::terminal::write_stdout("\033[2J\033[H");
+                redraw_buffer(state, render_state, buffer, true);
+                continue;
+            case key::EditorKey::Tab:
+                handle_tab_completion(state, render_state, buffer);
+                continue;
+            case key::EditorKey::Backspace:
+                if (editor_state::erase_before_cursor(buffer, history_state,
+                                                      state.history.size())) {
+                    redraw_buffer(state, render_state, buffer);
+                }
+                continue;
             }
-            continue;
-        case key::KeyKind::Character:
-            editor_state::insert_character(buffer, key_press.character,
-                                           history_state, state.history.size());
-            redraw_buffer(state, render_state, buffer);
-            continue;
-        case key::KeyKind::Resized:
-            redraw_buffer(state, render_state, buffer);
-            continue;
-        case key::KeyKind::ReadEof:
-        case key::KeyKind::Interrupted:
             break;
-        case key::KeyKind::Ignored:
+        case key::InputEventKind::Resized:
+            redraw_buffer(state, render_state, buffer);
+            continue;
+        case key::InputEventKind::ReadEof:
+        case key::InputEventKind::Interrupted:
+            break;
+        case key::InputEventKind::Ignored:
             continue;
         }
 

@@ -23,12 +23,12 @@ const std::array<EscapeDecoderSpec, 2> &escape_decoders() {
     return decoders;
 }
 
-KeyPress decode_escape_sequence() {
+InputEvent decode_escape_sequence() {
     DecodeContext context{read_stdin_byte, nullptr};
 
     char introducer = '\0';
     if (!read_next_byte(context, introducer)) {
-        return make_key_press(KeyKind::Ignored);
+        return make_system_event(InputEventKind::Ignored);
     }
 
     for (const EscapeDecoderSpec &decoder : escape_decoders()) {
@@ -37,55 +37,55 @@ KeyPress decode_escape_sequence() {
         }
     }
 
-    return make_key_press(KeyKind::Ignored);
+    return make_system_event(InputEventKind::Ignored);
 }
 
 } // namespace
 
-KeyPress read_key() {
+InputEvent read_event() {
     char ch = '\0';
     const ssize_t n = read(STDIN_FILENO, &ch, 1);
 
     if (n == 0) {
-        return make_key_press(KeyKind::ReadEof);
+        return make_system_event(InputEventKind::ReadEof);
     }
 
     if (n < 0) {
         if (errno == EINTR) {
             if (shell::signals::g_input_interrupted != 0) {
                 shell::signals::g_input_interrupted = 0;
-                return make_key_press(KeyKind::Interrupted);
+                return make_system_event(InputEventKind::Interrupted);
             }
             if (shell::signals::g_resize_pending != 0) {
                 shell::signals::g_resize_pending = 0;
-                return make_key_press(KeyKind::Resized);
+                return make_system_event(InputEventKind::Resized);
             }
-            return make_key_press(KeyKind::Interrupted);
+            return make_system_event(InputEventKind::Interrupted);
         }
-        return make_key_press(KeyKind::Ignored);
+        return make_system_event(InputEventKind::Ignored);
     }
 
     switch (ch) {
     case '\n':
     case '\r':
-        return make_key_press(KeyKind::Enter);
+        return make_key_event(EditorKey::Enter);
     case 1:
-        return make_key_press(KeyKind::CtrlA);
+        return make_key_event(EditorKey::CtrlA);
     case 4:
-        return make_key_press(KeyKind::CtrlD);
+        return make_key_event(EditorKey::CtrlD);
     case 5:
-        return make_key_press(KeyKind::CtrlE);
+        return make_key_event(EditorKey::CtrlE);
     case 8:
     case 127:
-        return make_key_press(KeyKind::Backspace);
+        return make_key_event(EditorKey::Backspace);
     case 9:
-        return make_key_press(KeyKind::Tab);
+        return make_key_event(EditorKey::Tab);
     case 12:
-        return make_key_press(KeyKind::CtrlL);
+        return make_key_event(EditorKey::CtrlL);
     case '\033':
         return decode_escape_sequence();
     default:
-        return make_key_press(KeyKind::Character, KeyModNone, ch);
+        return make_text_event(std::string(1, ch));
     }
 }
 

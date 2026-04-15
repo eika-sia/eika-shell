@@ -1,27 +1,34 @@
 #pragma once
 
+#include <string>
+
 namespace shell::input::key {
 
-enum class KeyKind {
-    Character,
+enum class InputEventKind {
+    TextInput,
+    Key,
+    Paste,
+    Resized,
+    Interrupted,
+    ReadEof,
+    Ignored,
+};
+
+enum class EditorKey {
     Enter,
-    CtrlA,
-    CtrlD,
-    CtrlE,
-    CtrlL,
     Tab,
     Backspace,
+    Delete,
     ArrowUp,
     ArrowDown,
     ArrowLeft,
     ArrowRight,
     Home,
     End,
-    Delete,
-    ReadEof,
-    Interrupted,
-    Resized,
-    Ignored,
+    CtrlA,
+    CtrlD,
+    CtrlE,
+    CtrlL,
 };
 
 enum KeyModifier {
@@ -31,10 +38,11 @@ enum KeyModifier {
     KeyModCtrl = 1 << 2,
 };
 
-struct KeyPress {
-    KeyKind kind = KeyKind::Ignored;
+struct InputEvent {
+    InputEventKind kind = InputEventKind::Ignored;
+    EditorKey key = EditorKey::Enter;
     unsigned modifiers = KeyModNone;
-    char character = '\0';
+    std::string text;
 };
 
 using ReadByteFn = bool (*)(void *context, char &ch);
@@ -44,7 +52,7 @@ struct DecodeContext {
     void *reader_context = nullptr;
 };
 
-using EscapeDecodeFn = KeyPress (*)(DecodeContext &context);
+using EscapeDecodeFn = InputEvent (*)(DecodeContext &context);
 
 struct EscapeDecoderSpec {
     char introducer = '\0';
@@ -56,15 +64,30 @@ inline bool read_next_byte(DecodeContext &context, char &ch) {
            context.read_byte(context.reader_context, ch);
 }
 
-inline KeyPress make_key_press(KeyKind kind, unsigned modifiers = KeyModNone,
-                               char character = '\0') {
-    return KeyPress{kind, modifiers, character};
+inline InputEvent make_key_event(EditorKey key,
+                                 unsigned modifiers = KeyModNone) {
+    return InputEvent{InputEventKind::Key, key, modifiers, {}};
 }
 
-inline bool has_modifier(const KeyPress &key_press, KeyModifier modifier) {
-    return (key_press.modifiers & static_cast<unsigned>(modifier)) != 0U;
+inline InputEvent make_text_event(const std::string &text,
+                                  unsigned modifiers = KeyModNone) {
+    return InputEvent{InputEventKind::TextInput, EditorKey::Enter, modifiers,
+                      text};
 }
 
-KeyPress read_key();
+inline InputEvent make_paste_event(const std::string &text) {
+    return InputEvent{InputEventKind::Paste, EditorKey::Enter, KeyModNone,
+                      text};
+}
+
+inline InputEvent make_system_event(InputEventKind kind) {
+    return InputEvent{kind, EditorKey::Enter, KeyModNone, {}};
+}
+
+inline bool has_modifier(const InputEvent &event, KeyModifier modifier) {
+    return (event.modifiers & static_cast<unsigned>(modifier)) != 0U;
+}
+
+InputEvent read_event();
 
 } // namespace shell::input::key

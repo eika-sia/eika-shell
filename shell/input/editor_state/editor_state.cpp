@@ -114,12 +114,12 @@ bool move_cursor_end(LineBuffer &buffer) {
     return true;
 }
 
-bool insert_character(LineBuffer &buffer, char ch,
-                      HistoryBrowseState &history_state, size_t history_size) {
+bool insert_text(LineBuffer &buffer, const std::string &in,
+                 HistoryBrowseState &history_state, size_t history_size) {
     clamp_cursor(buffer);
     prepare_for_edit(history_state, history_size);
-    buffer.text.insert(buffer.cursor, 1, ch);
-    ++buffer.cursor;
+    buffer.text.insert(buffer.cursor, in);
+    buffer.cursor += in.length();
     return true;
 }
 

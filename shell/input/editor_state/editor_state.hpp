@@ -24,9 +24,8 @@ bool move_cursor_word_right(LineBuffer &buffer);
 bool move_cursor_home(LineBuffer &buffer);
 bool move_cursor_end(LineBuffer &buffer);
 
-bool insert_character(LineBuffer &buffer, char ch,
-                      HistoryBrowseState &history_state,
-                      size_t history_size);
+bool insert_text(LineBuffer &buffer, const std::string &in,
+                 HistoryBrowseState &history_state, size_t history_size);
 bool erase_before_cursor(LineBuffer &buffer, HistoryBrowseState &history_state,
                          size_t history_size);
 bool erase_at_cursor(LineBuffer &buffer, HistoryBrowseState &history_state,

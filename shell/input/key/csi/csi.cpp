@@ -79,15 +79,43 @@ unsigned decode_csi_modifiers(int modifier_param) {
     return modifiers;
 }
 
+bool is_prefix_of(const std::string &text, const std::string &prefix) {
+    return prefix.compare(0, text.size(), text) == 0;
+}
+
+InputEvent read_bracketed_paste(DecodeContext &context) {
+    const std::string terminator = "\033[201~";
+    std::string payload;
+    std::string pending;
+
+    while (true) {
+        char ch = '\0';
+        if (!read_next_byte(context, ch)) {
+            payload += pending;
+            return make_paste_event(payload);
+        }
+
+        pending.push_back(ch);
+        if (pending == terminator) {
+            return make_paste_event(payload);
+        }
+
+        while (!pending.empty() && !is_prefix_of(pending, terminator)) {
+            payload.push_back(pending.front());
+            pending.erase(pending.begin());
+        }
+    }
+}
+
 } // namespace
 
-KeyPress decode(DecodeContext &context) {
+InputEvent decode(DecodeContext &context) {
     std::string parameter_text;
     char final_byte = '\0';
 
     while (true) {
         if (!read_next_byte(context, final_byte)) {
-            return make_key_press(KeyKind::Ignored);
+            return make_system_event(InputEventKind::Ignored);
         }
 
         if (is_csi_final_byte(final_byte)) {
@@ -96,51 +124,55 @@ KeyPress decode(DecodeContext &context) {
 
         parameter_text.push_back(final_byte);
         if (parameter_text.size() > 32) {
-            return make_key_press(KeyKind::Ignored);
+            return make_system_event(InputEventKind::Ignored);
         }
     }
 
     std::vector<int> params;
     if (!parse_csi_parameters(parameter_text, params)) {
-        return make_key_press(KeyKind::Ignored);
+        return make_system_event(InputEventKind::Ignored);
     }
 
-    const unsigned modifiers =
-        params.size() >= 2 ? decode_csi_modifiers(params.back())
-                           : static_cast<unsigned>(KeyModNone);
+    const unsigned modifiers = params.size() >= 2
+                                   ? decode_csi_modifiers(params.back())
+                                   : static_cast<unsigned>(KeyModNone);
 
     switch (final_byte) {
     case 'A':
-        return make_key_press(KeyKind::ArrowUp, modifiers);
+        return make_key_event(EditorKey::ArrowUp, modifiers);
     case 'B':
-        return make_key_press(KeyKind::ArrowDown, modifiers);
+        return make_key_event(EditorKey::ArrowDown, modifiers);
     case 'C':
-        return make_key_press(KeyKind::ArrowRight, modifiers);
+        return make_key_event(EditorKey::ArrowRight, modifiers);
     case 'D':
-        return make_key_press(KeyKind::ArrowLeft, modifiers);
+        return make_key_event(EditorKey::ArrowLeft, modifiers);
     case 'H':
-        return make_key_press(KeyKind::Home, modifiers);
+        return make_key_event(EditorKey::Home, modifiers);
     case 'F':
-        return make_key_press(KeyKind::End, modifiers);
+        return make_key_event(EditorKey::End, modifiers);
     case '~':
         if (params.empty()) {
-            return make_key_press(KeyKind::Ignored);
+            return make_system_event(InputEventKind::Ignored);
         }
 
         switch (params.front()) {
         case 1:
         case 7:
-            return make_key_press(KeyKind::Home, modifiers);
+            return make_key_event(EditorKey::Home, modifiers);
         case 3:
-            return make_key_press(KeyKind::Delete, modifiers);
+            return make_key_event(EditorKey::Delete, modifiers);
         case 4:
         case 8:
-            return make_key_press(KeyKind::End, modifiers);
+            return make_key_event(EditorKey::End, modifiers);
+        case 200:
+            return read_bracketed_paste(context);
+        case 201:
+            return make_system_event(InputEventKind::Ignored);
         default:
-            return make_key_press(KeyKind::Ignored);
+            return make_system_event(InputEventKind::Ignored);
         }
     default:
-        return make_key_press(KeyKind::Ignored);
+        return make_system_event(InputEventKind::Ignored);
     }
 }
 
