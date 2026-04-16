@@ -1,6 +1,7 @@
 #include "editor_state.hpp"
 
-#include <cctype>
+#include "../../../features/shell_text/shell_text.hpp"
+#include <vector>
 
 namespace shell::input::editor_state {
 namespace {
@@ -11,19 +12,31 @@ void clamp_cursor(LineBuffer &buffer) {
     }
 }
 
-bool is_editor_word_character(unsigned char ch) {
-    return std::isalnum(ch) != 0 || ch == '_';
+std::vector<bool> build_shell_separator_mask(const std::string &text) {
+    std::vector<bool> separators(text.size(), false);
+
+    features::shell_text::for_each_unescaped_position(
+        text, [&](size_t &i, const features::shell_text::ScanState &) {
+            separators[i] = features::shell_text::is_shell_separator(text[i]);
+            return true;
+        });
+
+    return separators;
+}
+
+bool is_shell_separator_at(const std::vector<bool> &separators, size_t index) {
+    return index < separators.size() && separators[index];
 }
 
 size_t find_word_left_boundary(const LineBuffer &buffer) {
+    const std::vector<bool> separators = build_shell_separator_mask(buffer.text);
     size_t cursor = buffer.cursor;
-    while (cursor > 0 && !is_editor_word_character(static_cast<unsigned char>(
-                             buffer.text[cursor - 1]))) {
+
+    while (cursor > 0 && is_shell_separator_at(separators, cursor - 1)) {
         --cursor;
     }
 
-    while (cursor > 0 && is_editor_word_character(static_cast<unsigned char>(
-                             buffer.text[cursor - 1]))) {
+    while (cursor > 0 && !is_shell_separator_at(separators, cursor - 1)) {
         --cursor;
     }
 
@@ -31,16 +44,15 @@ size_t find_word_left_boundary(const LineBuffer &buffer) {
 }
 
 size_t find_word_right_boundary(const LineBuffer &buffer) {
+    const std::vector<bool> separators = build_shell_separator_mask(buffer.text);
     size_t cursor = buffer.cursor;
     const size_t size = buffer.text.size();
-    while (cursor < size &&
-           !is_editor_word_character(
-               static_cast<unsigned char>(buffer.text[cursor]))) {
+
+    while (cursor < size && is_shell_separator_at(separators, cursor)) {
         ++cursor;
     }
 
-    while (cursor < size && is_editor_word_character(static_cast<unsigned char>(
-                                buffer.text[cursor]))) {
+    while (cursor < size && !is_shell_separator_at(separators, cursor)) {
         ++cursor;
     }
 

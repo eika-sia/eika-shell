@@ -209,9 +209,13 @@ That is important because `editor_state` decides what text was removed, but `ses
 
 ### Word Semantics
 
-Word movement and word-kill behavior currently use a simple editor definition:
-- alphanumeric characters
-- underscore
+Word movement and word-kill behavior now follow shell-token boundaries rather than identifier boundaries.
+
+In practice that means:
+- shell separators like space, tab, `|`, `;`, `&`, `<`, `>` break words
+- paths like `foo/bar-baz.txt` stay one movement/kill unit
+- flags like `--long-option=value` stay one movement/kill unit
+- quoted or escaped separators are treated as part of the same shell word
 
 ## `session_state/`: Per-Line Interaction State
 
