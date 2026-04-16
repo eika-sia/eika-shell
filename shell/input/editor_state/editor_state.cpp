@@ -11,29 +11,19 @@ void clamp_cursor(LineBuffer &buffer) {
     }
 }
 
-void prepare_for_edit(HistoryBrowseState &history_state, size_t history_size) {
-    if (!history_state.active) {
-        return;
-    }
-
-    reset_history_browse(history_state, history_size);
-}
-
 bool is_editor_word_character(unsigned char ch) {
     return std::isalnum(ch) != 0 || ch == '_';
 }
 
 size_t find_word_left_boundary(const LineBuffer &buffer) {
     size_t cursor = buffer.cursor;
-    while (cursor > 0 &&
-           !is_editor_word_character(
-               static_cast<unsigned char>(buffer.text[cursor - 1]))) {
+    while (cursor > 0 && !is_editor_word_character(static_cast<unsigned char>(
+                             buffer.text[cursor - 1]))) {
         --cursor;
     }
 
-    while (cursor > 0 &&
-           is_editor_word_character(
-               static_cast<unsigned char>(buffer.text[cursor - 1]))) {
+    while (cursor > 0 && is_editor_word_character(static_cast<unsigned char>(
+                             buffer.text[cursor - 1]))) {
         --cursor;
     }
 
@@ -49,9 +39,8 @@ size_t find_word_right_boundary(const LineBuffer &buffer) {
         ++cursor;
     }
 
-    while (cursor < size &&
-           is_editor_word_character(
-               static_cast<unsigned char>(buffer.text[cursor]))) {
+    while (cursor < size && is_editor_word_character(static_cast<unsigned char>(
+                                buffer.text[cursor]))) {
         ++cursor;
     }
 
@@ -59,7 +48,6 @@ size_t find_word_right_boundary(const LineBuffer &buffer) {
 }
 
 bool erase_range(LineBuffer &buffer, size_t erase_begin, size_t erase_end,
-                 HistoryBrowseState &history_state, size_t history_size,
                  std::string *erased_text = nullptr) {
     clamp_cursor(buffer);
 
@@ -75,10 +63,9 @@ bool erase_range(LineBuffer &buffer, size_t erase_begin, size_t erase_end,
         return false;
     }
 
-    prepare_for_edit(history_state, history_size);
     if (erased_text != nullptr) {
-        *erased_text = buffer.text.substr(clamped_begin,
-                                          clamped_end - clamped_begin);
+        *erased_text =
+            buffer.text.substr(clamped_begin, clamped_end - clamped_begin);
     }
 
     buffer.text.erase(clamped_begin, clamped_end - clamped_begin);
@@ -148,18 +135,15 @@ bool move_cursor_end(LineBuffer &buffer) {
     return true;
 }
 
-bool erase_before_cursor(LineBuffer &buffer, HistoryBrowseState &history_state,
-                         size_t history_size) {
+bool erase_before_cursor(LineBuffer &buffer) {
     clamp_cursor(buffer);
     return erase_range(buffer, buffer.cursor == 0 ? 0 : buffer.cursor - 1,
-                       buffer.cursor, history_state, history_size);
+                       buffer.cursor);
 }
 
-bool erase_at_cursor(LineBuffer &buffer, HistoryBrowseState &history_state,
-                     size_t history_size) {
+bool erase_at_cursor(LineBuffer &buffer) {
     clamp_cursor(buffer);
-    return erase_range(buffer, buffer.cursor, buffer.cursor + 1, history_state,
-                       history_size);
+    return erase_range(buffer, buffer.cursor, buffer.cursor + 1);
 }
 
 bool browse_history_up(LineBuffer &buffer,
@@ -222,22 +206,19 @@ bool apply_movement(LineBuffer &buffer, Movement movement) {
     return false;
 }
 
-bool insert_text(LineBuffer &buffer, const std::string &in,
-                 HistoryBrowseState &history_state, size_t history_size) {
+bool insert_text(LineBuffer &buffer, const std::string &in) {
     if (in.empty()) {
         return false;
     }
 
     clamp_cursor(buffer);
-    prepare_for_edit(history_state, history_size);
     buffer.text.insert(buffer.cursor, in);
     buffer.cursor += in.length();
     return true;
 }
 
 bool replace_range(LineBuffer &buffer, size_t replace_begin, size_t replace_end,
-                   const std::string &replacement,
-                   HistoryBrowseState &history_state, size_t history_size) {
+                   const std::string &replacement) {
     clamp_cursor(buffer);
 
     const size_t clamped_begin =
@@ -255,55 +236,57 @@ bool replace_range(LineBuffer &buffer, size_t replace_begin, size_t replace_end,
         return false;
     }
 
-    prepare_for_edit(history_state, history_size);
     buffer.text.replace(clamped_begin, clamped_end - clamped_begin,
                         replacement);
     buffer.cursor = new_cursor;
     return true;
 }
 
-bool apply_erase(LineBuffer &buffer, Erase erase_action,
-                 HistoryBrowseState &history_state, size_t history_size) {
+bool apply_erase(LineBuffer &buffer, Erase erase_action) {
     switch (erase_action) {
     case Erase::BeforeCursor:
-        return erase_before_cursor(buffer, history_state, history_size);
+        return erase_before_cursor(buffer);
     case Erase::AtCursor:
-        return erase_at_cursor(buffer, history_state, history_size);
+        return erase_at_cursor(buffer);
     }
 
     return false;
 }
 
-bool apply_kill(LineBuffer &buffer, Kill kill_action,
-                HistoryBrowseState &history_state, size_t history_size) {
+KillResult apply_kill(LineBuffer &buffer, Kill kill_action) {
     clamp_cursor(buffer);
 
     size_t kill_begin = buffer.cursor;
     size_t kill_end = buffer.cursor;
+    KillDirection direction = KillDirection::Forward;
 
     switch (kill_action) {
     case Kill::WordLeft:
         kill_begin = find_word_left_boundary(buffer);
+        direction = KillDirection::Backward;
         break;
     case Kill::ToLineStart:
         kill_begin = 0;
+        direction = KillDirection::Backward;
         break;
     case Kill::ToLineEnd:
         kill_end = buffer.text.size();
+        direction = KillDirection::Forward;
         break;
     case Kill::WordRight:
         kill_end = find_word_right_boundary(buffer);
+        direction = KillDirection::Forward;
         break;
     }
 
-    return erase_range(buffer, kill_begin, kill_end, history_state,
-                       history_size, &history_state.kill_buffer);
-}
-
-bool yank_kill_buffer(LineBuffer &buffer, HistoryBrowseState &history_state,
-                      size_t history_size) {
-    return insert_text(buffer, history_state.kill_buffer, history_state,
-                       history_size);
+    KillResult result{};
+    result.direction = direction;
+    result.changed = erase_range(buffer, kill_begin, kill_end,
+                                 &result.killed_text);
+    if (!result.changed) {
+        result.killed_text.clear();
+    }
+    return result;
 }
 
 bool apply_history_navigation(LineBuffer &buffer, HistoryNavigation navigation,

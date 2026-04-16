@@ -15,7 +15,6 @@ struct HistoryBrowseState {
     bool active = false;
     size_t index = 0;
     std::string draft;
-    std::string kill_buffer;
 };
 
 enum class Movement {
@@ -44,19 +43,24 @@ enum class Kill {
     WordRight,
 };
 
+enum class KillDirection {
+    Forward,
+    Backward,
+};
+
+struct KillResult {
+    bool changed = false;
+    std::string killed_text;
+    KillDirection direction = KillDirection::Forward;
+};
+
 bool apply_movement(LineBuffer &buffer, Movement movement);
 
-bool insert_text(LineBuffer &buffer, const std::string &in,
-                 HistoryBrowseState &history_state, size_t history_size);
+bool insert_text(LineBuffer &buffer, const std::string &in);
 bool replace_range(LineBuffer &buffer, size_t replace_begin, size_t replace_end,
-                   const std::string &replacement,
-                   HistoryBrowseState &history_state, size_t history_size);
-bool apply_erase(LineBuffer &buffer, Erase erase_action,
-                 HistoryBrowseState &history_state, size_t history_size);
-bool apply_kill(LineBuffer &buffer, Kill kill_action,
-                HistoryBrowseState &history_state, size_t history_size);
-bool yank_kill_buffer(LineBuffer &buffer, HistoryBrowseState &history_state,
-                      size_t history_size);
+                   const std::string &replacement);
+bool apply_erase(LineBuffer &buffer, Erase erase_action);
+KillResult apply_kill(LineBuffer &buffer, Kill kill_action);
 
 bool apply_history_navigation(LineBuffer &buffer, HistoryNavigation navigation,
                               const std::vector<std::string> &history,
