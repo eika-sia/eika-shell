@@ -4,6 +4,7 @@
 
 namespace shell::input::key {
 
+InputEvent decode_backspace_byte(unsigned char ch);
 InputEvent decode_control_byte(unsigned char ch);
 InputEvent decode_alt_prefixed_byte(unsigned char ch);
 

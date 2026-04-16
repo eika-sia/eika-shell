@@ -58,6 +58,9 @@ bool begin_input_session(InputSession &session) {
         return false;
     }
 
+    key::set_backspace_byte(
+        static_cast<unsigned char>(session.saved_state_.c_cc[VERASE]));
+
     struct termios raw = session.saved_state_;
     raw.c_lflag &= ~ICANON;
     raw.c_lflag &= ~ECHO;
@@ -128,9 +131,9 @@ void apply_movement_and_redraw(InputContext &context,
 
 void apply_erase_and_redraw(InputContext &context,
                             editor_state::Erase erase_action) {
-    redraw_if_changed(
-        context, session_state::apply_erase(context.session, context.buffer,
-                                            context.history_size, erase_action));
+    redraw_if_changed(context, session_state::apply_erase(
+                                   context.session, context.buffer,
+                                   context.history_size, erase_action));
 }
 
 void apply_kill_and_redraw(InputContext &context,
@@ -148,9 +151,9 @@ void yank_kill_buffer_and_redraw(InputContext &context) {
 }
 
 void yank_pop_and_redraw(InputContext &context) {
-    redraw_if_changed(context, session_state::yank_pop(
-                                   context.session, context.buffer,
-                                   context.history_size));
+    redraw_if_changed(context,
+                      session_state::yank_pop(context.session, context.buffer,
+                                              context.history_size));
 }
 
 void apply_history_navigation_and_redraw(
@@ -163,22 +166,21 @@ void apply_history_navigation_and_redraw(
 void replace_range_and_redraw(InputContext &context, size_t replace_begin,
                               size_t replace_end,
                               const std::string &replacement) {
-    redraw_if_changed(
-        context, session_state::replace_range(
-                     context.session, context.buffer, context.history_size,
-                     replace_begin, replace_end, replacement));
+    redraw_if_changed(context,
+                      session_state::replace_range(
+                          context.session, context.buffer, context.history_size,
+                          replace_begin, replace_end, replacement));
 }
 
 void insert_input_text(InputContext &context, const std::string &text) {
-    redraw_if_changed(context, session_state::insert_text(
-                                   context.session, context.buffer,
-                                   context.history_size, text));
+    redraw_if_changed(
+        context, session_state::insert_text(context.session, context.buffer,
+                                            context.history_size, text));
 }
 
 void handle_tab_completion(InputContext &context) {
-    const features::CompletionResult completion =
-        features::complete_at_cursor(context.state, context.buffer.text,
-                                     context.buffer.cursor);
+    const features::CompletionResult completion = features::complete_at_cursor(
+        context.state, context.buffer.text, context.buffer.cursor);
 
     switch (completion.action) {
     case features::CompletionAction::None:
@@ -197,8 +199,8 @@ void handle_tab_completion(InputContext &context) {
     }
 }
 
-KeyHandlingResult
-handle_character_key(InputContext &context, const key::InputEvent &event) {
+KeyHandlingResult handle_character_key(InputContext &context,
+                                       const key::InputEvent &event) {
     if (event.key != key::EditorKey::Character) {
         return KeyHandlingResult::Ignore;
     }
@@ -208,8 +210,7 @@ handle_character_key(InputContext &context, const key::InputEvent &event) {
         switch (binding) {
         case 'a':
             session_state::note_non_kill_command(context.session);
-            apply_movement_and_redraw(context,
-                                      editor_state::Movement::Home);
+            apply_movement_and_redraw(context, editor_state::Movement::Home);
             return KeyHandlingResult::ContinueLoop;
         case 'd':
             if (context.buffer.text.empty()) {
@@ -222,8 +223,7 @@ handle_character_key(InputContext &context, const key::InputEvent &event) {
             return KeyHandlingResult::ContinueLoop;
         case 'e':
             session_state::note_non_kill_command(context.session);
-            apply_movement_and_redraw(context,
-                                      editor_state::Movement::End);
+            apply_movement_and_redraw(context, editor_state::Movement::End);
             return KeyHandlingResult::ContinueLoop;
         case 'k':
             apply_kill_and_redraw(context, editor_state::Kill::ToLineEnd);
@@ -241,6 +241,22 @@ handle_character_key(InputContext &context, const key::InputEvent &event) {
             return KeyHandlingResult::ContinueLoop;
         case 'y':
             yank_kill_buffer_and_redraw(context);
+            return KeyHandlingResult::ContinueLoop;
+        case 'b':
+            session_state::note_non_kill_command(context.session);
+            apply_movement_and_redraw(context, editor_state::Movement::Left);
+            return KeyHandlingResult::ContinueLoop;
+        case 'f':
+            session_state::note_non_kill_command(context.session);
+            apply_movement_and_redraw(context, editor_state::Movement::Right);
+            return KeyHandlingResult::ContinueLoop;
+        case 'p':
+            apply_history_navigation_and_redraw(
+                context, editor_state::HistoryNavigation::Up);
+            return KeyHandlingResult::ContinueLoop;
+        case 'n':
+            apply_history_navigation_and_redraw(
+                context, editor_state::HistoryNavigation::Down);
             return KeyHandlingResult::ContinueLoop;
         default:
             break;
@@ -273,8 +289,8 @@ handle_character_key(InputContext &context, const key::InputEvent &event) {
     return KeyHandlingResult::Ignore;
 }
 
-KeyHandlingResult
-handle_special_key(InputContext &context, const key::InputEvent &event) {
+KeyHandlingResult handle_special_key(InputContext &context,
+                                     const key::InputEvent &event) {
     switch (event.key) {
     case key::EditorKey::Character:
         return KeyHandlingResult::Ignore;
@@ -289,14 +305,20 @@ handle_special_key(InputContext &context, const key::InputEvent &event) {
         handle_tab_completion(context);
         return KeyHandlingResult::ContinueLoop;
     case key::EditorKey::Backspace:
+        if (key::has_modifier(event, key::KeyModAlt) ||
+            key::has_modifier(event, key::KeyModCtrl)) {
+            apply_kill_and_redraw(context, editor_state::Kill::WordLeft);
+            return KeyHandlingResult::ContinueLoop;
+        }
+
         apply_erase_and_redraw(context, editor_state::Erase::BeforeCursor);
         return KeyHandlingResult::ContinueLoop;
     case key::EditorKey::Delete:
         apply_erase_and_redraw(context, editor_state::Erase::AtCursor);
         return KeyHandlingResult::ContinueLoop;
     case key::EditorKey::ArrowUp:
-        apply_history_navigation_and_redraw(context,
-                                            editor_state::HistoryNavigation::Up);
+        apply_history_navigation_and_redraw(
+            context, editor_state::HistoryNavigation::Up);
         return KeyHandlingResult::ContinueLoop;
     case key::EditorKey::ArrowDown:
         apply_history_navigation_and_redraw(
@@ -318,21 +340,19 @@ handle_special_key(InputContext &context, const key::InputEvent &event) {
         return KeyHandlingResult::ContinueLoop;
     case key::EditorKey::Home:
         session_state::note_non_kill_command(context.session);
-        apply_movement_and_redraw(context,
-                                  editor_state::Movement::Home);
+        apply_movement_and_redraw(context, editor_state::Movement::Home);
         return KeyHandlingResult::ContinueLoop;
     case key::EditorKey::End:
         session_state::note_non_kill_command(context.session);
-        apply_movement_and_redraw(context,
-                                  editor_state::Movement::End);
+        apply_movement_and_redraw(context, editor_state::Movement::End);
         return KeyHandlingResult::ContinueLoop;
     }
 
     return KeyHandlingResult::Ignore;
 }
 
-KeyHandlingResult
-handle_key_event(InputContext &context, const key::InputEvent &event) {
+KeyHandlingResult handle_key_event(InputContext &context,
+                                   const key::InputEvent &event) {
     const KeyHandlingResult character_result =
         handle_character_key(context, event);
     if (character_result != KeyHandlingResult::Ignore) {
@@ -397,8 +417,8 @@ InputResult read_command_line(shell::ShellState &state,
     session_state::EditorSessionState session{};
     const size_t history_size = state.history.size();
     session_state::initialize_editor_session(session, history_size);
-    InputContext context{state, render_state, buffer, session, history_size,
-                         result};
+    InputContext context{state,   render_state, buffer,
+                         session, history_size, result};
 
     InputSession input_session{};
     if (!begin_input_session(input_session)) {

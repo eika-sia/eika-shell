@@ -292,6 +292,7 @@ The bindings are intentionally implemented in `input.cpp`, not in `key/`.
 ### Alt bindings
 
 - `Alt+B` -> word-left
+- `Alt+Backspace` -> kill previous word
 - `Alt+F` -> word-right
 - `Alt+D` -> kill next word
 - `Alt+Y` -> yank-pop
@@ -300,6 +301,7 @@ The bindings are intentionally implemented in `input.cpp`, not in `key/`.
 
 - arrows -> movement / history
 - `Ctrl+Left`, `Ctrl+Right` -> word movement
+- `Ctrl+Backspace` -> kill previous word
 - `Home`, `End`
 - `Backspace`, `Delete`
 - `Tab` -> completion

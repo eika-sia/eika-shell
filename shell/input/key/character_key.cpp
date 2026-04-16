@@ -3,6 +3,10 @@
 namespace shell::input::key {
 namespace {
 
+unsigned char g_backspace_byte = 127U;
+
+bool is_backspace_byte(unsigned char ch) { return ch == 8U || ch == 127U; }
+
 bool is_control_letter(unsigned char ch) { return ch >= 1U && ch <= 26U; }
 
 char control_letter_from_byte(unsigned char ch) {
@@ -10,6 +14,24 @@ char control_letter_from_byte(unsigned char ch) {
 }
 
 } // namespace
+
+void set_backspace_byte(unsigned char backspace_byte) {
+    if (is_backspace_byte(backspace_byte)) {
+        g_backspace_byte = backspace_byte;
+    }
+}
+
+InputEvent decode_backspace_byte(unsigned char ch) {
+    if (!is_backspace_byte(ch)) {
+        return make_ignored_event();
+    }
+
+    if (ch == g_backspace_byte) {
+        return make_special_key_event(EditorKey::Backspace);
+    }
+
+    return make_special_key_event(EditorKey::Backspace, KeyModCtrl);
+}
 
 InputEvent decode_control_byte(unsigned char ch) {
     if (!is_control_letter(ch)) {

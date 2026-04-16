@@ -83,6 +83,27 @@ bool is_prefix_of(const std::string &text, const std::string &prefix) {
     return prefix.compare(0, text.size(), text) == 0;
 }
 
+InputEvent decode_modified_codepoint(int codepoint, unsigned modifiers) {
+    switch (codepoint) {
+    case 8:
+    case 127:
+        return make_special_key_event(EditorKey::Backspace, modifiers);
+    case 9:
+        return make_special_key_event(EditorKey::Tab, modifiers);
+    case 13:
+        return make_special_key_event(EditorKey::Enter, modifiers);
+    default:
+        break;
+    }
+
+    if (codepoint >= 32 && codepoint <= 126) {
+        return make_character_key_event(static_cast<char>(codepoint),
+                                        modifiers);
+    }
+
+    return make_ignored_event();
+}
+
 InputEvent read_bracketed_paste(DecodeContext &context) {
     const std::string terminator = "\033[201~";
     std::string payload;
@@ -156,6 +177,13 @@ InputEvent decode(DecodeContext &context) {
         }
 
         switch (params.front()) {
+        case 27:
+            if (params.size() < 3) {
+                return make_ignored_event();
+            }
+
+            return decode_modified_codepoint(
+                params[2], decode_csi_modifiers(params[1]));
         case 1:
         case 7:
             return make_special_key_event(EditorKey::Home, modifiers);
@@ -171,6 +199,12 @@ InputEvent decode(DecodeContext &context) {
         default:
             return make_ignored_event();
         }
+    case 'u':
+        if (params.empty()) {
+            return make_ignored_event();
+        }
+
+        return decode_modified_codepoint(params.front(), modifiers);
     default:
         return make_ignored_event();
     }

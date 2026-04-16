@@ -109,6 +109,7 @@ inline bool has_modifier(const InputEvent &event, KeyModifier modifier) {
     return (event.modifiers & static_cast<unsigned>(modifier)) != 0U;
 }
 
+void set_backspace_byte(unsigned char backspace_byte);
 InputEvent read_event();
 
 } // namespace shell::input::key

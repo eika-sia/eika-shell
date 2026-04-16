@@ -156,7 +156,7 @@ InputEvent read_event() {
         return make_special_key_event(EditorKey::Enter);
     case 8:
     case 127:
-        return make_special_key_event(EditorKey::Backspace);
+        return decode_backspace_byte(static_cast<unsigned char>(ch));
     case 9:
         return make_special_key_event(EditorKey::Tab);
     case '\033':
