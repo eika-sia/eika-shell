@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "../../features/completion/completion.hpp"
+#include "../../features/completion/path_completion.hpp"
 #include "../prompt/prompt.hpp"
 #include "../shell.hpp"
 #include "../signals/signals.hpp"
@@ -82,10 +83,35 @@ void redraw_buffer(const InputContext &context, bool full_prompt = false) {
                                      full_prompt);
 }
 
+std::string format_completion_candidate(const std::string &candidate) {
+    if (candidate.empty()) {
+        return candidate;
+    }
+
+    if (candidate.rfind("./", 0) == 0 || candidate.rfind("../", 0) == 0) {
+        return candidate;
+    }
+
+    const size_t pos = candidate.find_last_of('/');
+    if (pos == 0 || pos == std::string::npos) {
+        return candidate;
+    }
+
+    if (pos == candidate.size() - 1) {
+        return ".../" +
+               features::get_basename_part(
+                   candidate.substr(0, candidate.size() - 1)) +
+               "/";
+    }
+
+    return ".../" + features::get_basename_part(candidate);
+}
+
 void print_completion_candidates(const std::vector<std::string> &candidates) {
     shell::terminal::write_stdout_line("");
     for (const std::string &candidate : candidates) {
-        shell::terminal::write_stdout(candidate + "  ");
+        shell::terminal::write_stdout(format_completion_candidate(candidate) +
+                                      "  ");
     }
     shell::terminal::write_stdout_line("");
 }
