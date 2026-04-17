@@ -31,5 +31,4 @@ std::string resolve_command_in_path(const shell::ShellState &state,
                                     const std::string &token);
 bool command_exists_in_path(const shell::ShellState &state,
                             const std::string &token);
-std::string get_basename_part(const std::string &token);
 } // namespace features

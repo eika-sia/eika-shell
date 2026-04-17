@@ -1,4 +1,5 @@
 #include "completion.hpp"
+#include "completion_format.hpp"
 #include "path_completion.hpp"
 
 #include "../../parser/assignments/assignment.hpp"
@@ -10,12 +11,6 @@
 
 namespace features {
 namespace {
-
-enum class CompletionQuoteMode {
-    None,
-    Single,
-    Double,
-};
 
 enum class CompletionTokenRole {
     CommandWord,
@@ -326,108 +321,6 @@ CompletionContext parse_completion_context(const std::string &buf,
     return result;
 }
 
-std::string render_unquoted(const std::string &text) {
-    std::string out;
-    for (char c : text) {
-        switch (c) {
-        case ' ':
-        case '\t':
-        case '\\':
-        case '\'':
-        case '"':
-        case '$':
-        case '!':
-        case '|':
-        case '&':
-        case ';':
-        case '<':
-        case '>':
-            out.push_back('\\');
-            out.push_back(c);
-            break;
-        default:
-            out.push_back(c);
-            break;
-        }
-    }
-    return out;
-}
-
-std::string render_double_quoted(const std::string &text) {
-    std::string out = "\"";
-    for (char c : text) {
-        switch (c) {
-        case '"':
-        case '\\':
-        case '$':
-        case '!':
-            out.push_back('\\');
-            out.push_back(c);
-            break;
-        default:
-            out.push_back(c);
-            break;
-        }
-    }
-    out.push_back('"');
-    return out;
-}
-
-std::string render_single_quoted(const std::string &text) {
-    std::string out = "'";
-    for (char c : text) {
-        if (c == '\'') {
-            out += "'\\''";
-        } else {
-            out.push_back(c);
-        }
-    }
-    out.push_back('\'');
-    return out;
-}
-
-std::string render_completion_text(const CompletionContext &ctx,
-                                   const std::string &logical_text,
-                                   bool close_word, bool is_directory) {
-    std::string out;
-
-    switch (ctx.quote_mode) {
-    case CompletionQuoteMode::None:
-        out = render_unquoted(logical_text);
-        break;
-    case CompletionQuoteMode::Single:
-        if (close_word || logical_text.find('\'') != std::string::npos) {
-            out = render_single_quoted(logical_text);
-        } else {
-            out = "'" + logical_text;
-        }
-        break;
-    case CompletionQuoteMode::Double:
-        if (close_word) {
-            out = render_double_quoted(logical_text);
-        } else {
-            out = "\"";
-            for (char c : logical_text) {
-                if (c == '"' || c == '\\' || c == '$' || c == '!') {
-                    out.push_back('\\');
-                }
-                out.push_back(c);
-            }
-        }
-        break;
-    }
-
-    if (close_word) {
-        if (is_directory) {
-            out += "/";
-        } else {
-            out += " ";
-        }
-    }
-
-    return out;
-}
-
 std::string
 longest_common_prefix(const std::vector<CompletionCandidate> &matches) {
     if (matches.empty()) {
@@ -484,14 +377,19 @@ CompletionResult complete_at_cursor(const shell::ShellState &state,
     std::sort(matches.begin(), matches.end(),
               [](const auto &a, const auto &b) { return a.text < b.text; });
 
+    CompletionFormatOptions format{};
+    format.quote_mode = ctx.quote_mode;
+    format.finalize = false;
+    format.is_directory = false;
     if (matches.size() == 1) {
-        return CompletionResult{CompletionAction::ReplaceToken,
-                                ctx.raw_begin,
-                                ctx.raw_end,
-                                render_completion_text(ctx, matches[0].text,
-                                                       true,
-                                                       matches[0].is_directory),
-                                {}};
+        format.finalize = true;
+        format.is_directory = matches[0].is_directory;
+        return CompletionResult{
+            CompletionAction::ReplaceToken,
+            ctx.raw_begin,
+            ctx.raw_end,
+            format_completion_replacement(matches[0].text, format),
+            {}};
     }
 
     const std::string lcp = longest_common_prefix(matches);
@@ -499,7 +397,7 @@ CompletionResult complete_at_cursor(const shell::ShellState &state,
         return CompletionResult{CompletionAction::ReplaceToken,
                                 ctx.raw_begin,
                                 ctx.raw_end,
-                                render_completion_text(ctx, lcp, false, false),
+                                format_completion_replacement(lcp, format),
                                 {}};
     }
 

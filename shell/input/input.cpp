@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "../../features/completion/completion.hpp"
-#include "../../features/completion/path_completion.hpp"
+#include "../../features/completion/completion_format.hpp"
 #include "../prompt/prompt.hpp"
 #include "../shell.hpp"
 #include "../signals/signals.hpp"

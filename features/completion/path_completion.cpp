@@ -1,4 +1,5 @@
 #include "path_completion.hpp"
+#include "completion_format.hpp"
 
 #include <algorithm>
 #include <dirent.h>
@@ -97,16 +98,6 @@ bool for_each_path_directory(const shell::ShellState &state,
 }
 
 } // namespace
-
-std::string get_basename_part(const std::string &token) {
-    size_t pos = token.find_last_of('/');
-
-    if (pos == std::string::npos) {
-        return token;
-    }
-
-    return token.substr(pos + 1);
-}
 
 std::string expand_tilde_prefix(const shell::ShellState &state,
                                 const std::string &token) {
