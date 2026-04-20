@@ -12,6 +12,18 @@ void clamp_cursor(LineBuffer &buffer) {
     }
 }
 
+void clamp_range(size_t text_size, size_t &range_begin, size_t &range_end) {
+    if (range_begin > text_size) {
+        range_begin = text_size;
+    }
+    if (range_end > text_size) {
+        range_end = text_size;
+    }
+    if (range_end < range_begin) {
+        range_end = range_begin;
+    }
+}
+
 std::vector<bool> build_shell_separator_mask(const std::string &text) {
     std::vector<bool> separators(text.size(), false);
 
@@ -29,7 +41,8 @@ bool is_shell_separator_at(const std::vector<bool> &separators, size_t index) {
 }
 
 size_t find_word_left_boundary(const LineBuffer &buffer) {
-    const std::vector<bool> separators = build_shell_separator_mask(buffer.text);
+    const std::vector<bool> separators =
+        build_shell_separator_mask(buffer.text);
     size_t cursor = buffer.cursor;
 
     while (cursor > 0 && is_shell_separator_at(separators, cursor - 1)) {
@@ -44,7 +57,8 @@ size_t find_word_left_boundary(const LineBuffer &buffer) {
 }
 
 size_t find_word_right_boundary(const LineBuffer &buffer) {
-    const std::vector<bool> separators = build_shell_separator_mask(buffer.text);
+    const std::vector<bool> separators =
+        build_shell_separator_mask(buffer.text);
     size_t cursor = buffer.cursor;
     const size_t size = buffer.text.size();
 
@@ -63,13 +77,9 @@ bool erase_range(LineBuffer &buffer, size_t erase_begin, size_t erase_end,
                  std::string *erased_text = nullptr) {
     clamp_cursor(buffer);
 
-    const size_t clamped_begin =
-        erase_begin > buffer.text.size() ? buffer.text.size() : erase_begin;
-    size_t clamped_end =
-        erase_end > buffer.text.size() ? buffer.text.size() : erase_end;
-    if (clamped_end < clamped_begin) {
-        clamped_end = clamped_begin;
-    }
+    size_t clamped_begin = erase_begin;
+    size_t clamped_end = erase_end;
+    clamp_range(buffer.text.size(), clamped_begin, clamped_end);
 
     if (clamped_begin == clamped_end) {
         return false;
@@ -218,6 +228,18 @@ bool apply_movement(LineBuffer &buffer, Movement movement) {
     return false;
 }
 
+bool restore_buffer(LineBuffer &buffer, const std::string &text,
+                    size_t cursor) {
+    const size_t clamped_cursor = cursor > text.size() ? text.size() : cursor;
+    if (buffer.text == text && buffer.cursor == clamped_cursor) {
+        return false;
+    }
+
+    buffer.text = text;
+    buffer.cursor = clamped_cursor;
+    return true;
+}
+
 bool insert_text(LineBuffer &buffer, const std::string &in) {
     if (in.empty()) {
         return false;
@@ -233,13 +255,9 @@ bool replace_range(LineBuffer &buffer, size_t replace_begin, size_t replace_end,
                    const std::string &replacement) {
     clamp_cursor(buffer);
 
-    const size_t clamped_begin =
-        replace_begin > buffer.text.size() ? buffer.text.size() : replace_begin;
-    size_t clamped_end =
-        replace_end > buffer.text.size() ? buffer.text.size() : replace_end;
-    if (clamped_end < clamped_begin) {
-        clamped_end = clamped_begin;
-    }
+    size_t clamped_begin = replace_begin;
+    size_t clamped_end = replace_end;
+    clamp_range(buffer.text.size(), clamped_begin, clamped_end);
 
     const size_t new_cursor = clamped_begin + replacement.size();
     if (buffer.text.compare(clamped_begin, clamped_end - clamped_begin,
@@ -252,6 +270,21 @@ bool replace_range(LineBuffer &buffer, size_t replace_begin, size_t replace_end,
                         replacement);
     buffer.cursor = new_cursor;
     return true;
+}
+
+bool replace_range_from_anchor(LineBuffer &buffer,
+                               const std::string &anchor_text,
+                               size_t replace_begin, size_t replace_end,
+                               const std::string &replacement) {
+    size_t clamped_begin = replace_begin;
+    size_t clamped_end = replace_end;
+    clamp_range(anchor_text.size(), clamped_begin, clamped_end);
+
+    std::string replaced_text = anchor_text;
+    replaced_text.replace(clamped_begin, clamped_end - clamped_begin,
+                          replacement);
+    const size_t new_cursor = clamped_begin + replacement.size();
+    return restore_buffer(buffer, replaced_text, new_cursor);
 }
 
 bool apply_erase(LineBuffer &buffer, Erase erase_action) {
@@ -293,8 +326,8 @@ KillResult apply_kill(LineBuffer &buffer, Kill kill_action) {
 
     KillResult result{};
     result.direction = direction;
-    result.changed = erase_range(buffer, kill_begin, kill_end,
-                                 &result.killed_text);
+    result.changed =
+        erase_range(buffer, kill_begin, kill_end, &result.killed_text);
     if (!result.changed) {
         result.killed_text.clear();
     }

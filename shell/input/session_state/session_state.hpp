@@ -23,12 +23,25 @@ struct KillRingState {
     YankState yank;
 };
 
+struct CompletionSelectionState {
+    bool active = false;
+    bool preview_active = false;
+    std::string anchor_text;
+    size_t anchor_cursor = 0;
+    size_t replace_begin = 0;
+    size_t replace_end = 0;
+    std::vector<std::string> candidates;
+    size_t selected_index = 0;
+};
+
 struct EditorSessionState {
     editor_state::HistoryBrowseState history;
     KillRingState kill_ring;
+    CompletionSelectionState completion;
 };
 
-void initialize_editor_session(EditorSessionState &session, size_t history_size);
+void initialize_editor_session(EditorSessionState &session,
+                               size_t history_size);
 void note_non_kill_command(EditorSessionState &session,
                            bool invalidate_yank = true);
 
@@ -52,5 +65,17 @@ bool apply_history_navigation(EditorSessionState &session,
                               editor_state::LineBuffer &buffer,
                               editor_state::HistoryNavigation navigation,
                               const std::vector<std::string> &history);
+
+void begin_completion_selection(EditorSessionState &session,
+                                const editor_state::LineBuffer &buffer,
+                                size_t replace_begin, size_t replace_end,
+                                std::vector<std::string> candidates);
+bool cycle_completion_selection(EditorSessionState &session,
+                                editor_state::LineBuffer &buffer,
+                                size_t history_size);
+bool cancel_completion_selection(EditorSessionState &session,
+                                 editor_state::LineBuffer &buffer,
+                                 size_t history_size);
+void confirm_completion_selection(EditorSessionState &session);
 
 } // namespace shell::input::session_state

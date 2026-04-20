@@ -2,7 +2,6 @@
 
 #include <cstdio>
 #include <signal.h>
-#include <unistd.h>
 
 namespace shell::signals {
 
@@ -19,7 +18,6 @@ void handle_sigint(int signo) {
         kill(-g_foreground_pgid, SIGINT);
     } else {
         g_input_interrupted = 1;
-        write(STDOUT_FILENO, "\n", 1);
     }
 }
 

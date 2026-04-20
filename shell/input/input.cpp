@@ -10,6 +10,7 @@
 #include "../../features/completion/completion.hpp"
 #include "../../features/completion/completion_format.hpp"
 #include "../prompt/prompt.hpp"
+#include "../prompt/render_utils.hpp"
 #include "../shell.hpp"
 #include "../signals/signals.hpp"
 #include "../terminal/terminal.hpp"
@@ -19,6 +20,9 @@
 
 namespace shell::input {
 namespace {
+const std::string blue_bold = "\033[1;34m";
+const std::string reverse_video = "\033[7m";
+const std::string reset = "\033[0m";
 
 enum class KeyHandlingResult {
     ContinueLoop,
@@ -42,6 +46,10 @@ struct InputSession {
     }
 };
 
+struct CompletionMenuRenderState {
+    size_t rows = 0;
+};
+
 struct InputContext {
     const shell::ShellState &state;
     shell::prompt::InputRenderState &render_state;
@@ -49,6 +57,7 @@ struct InputContext {
     session_state::EditorSessionState &session;
     size_t history_size = 0;
     InputResult &result;
+    CompletionMenuRenderState completion_render_state;
 };
 
 bool begin_input_session(InputSession &session) {
@@ -83,37 +92,106 @@ void redraw_buffer(const InputContext &context, bool full_prompt = false) {
                                      full_prompt);
 }
 
-std::string format_completion_candidate(const std::string &candidate) {
+std::string format_completion_candidate(const std::string &candidate,
+                                        bool colorize = true) {
     if (candidate.empty()) {
         return candidate;
     }
 
-    if (candidate.rfind("./", 0) == 0 || candidate.rfind("../", 0) == 0) {
-        return candidate;
+    const bool has_trailing_slash = candidate.back() == '/';
+    std::string basename_source = candidate;
+    if (has_trailing_slash && candidate.size() > 1) {
+        basename_source.pop_back();
     }
 
-    const size_t pos = candidate.find_last_of('/');
-    if (pos == 0 || pos == std::string::npos) {
-        return candidate;
+    const std::string basename = features::get_basename_part(basename_source);
+    if (basename.empty()) {
+        return has_trailing_slash ? "/" : candidate;
     }
 
-    if (pos == candidate.size() - 1) {
-        return ".../" +
-               features::get_basename_part(
-                   candidate.substr(0, candidate.size() - 1)) +
-               "/";
+    if (!has_trailing_slash) {
+        return basename;
     }
 
-    return ".../" + features::get_basename_part(candidate);
+    if (!colorize) {
+        return basename + "/";
+    }
+
+    return blue_bold + basename + "/" + reset;
 }
 
-void print_completion_candidates(const std::vector<std::string> &candidates) {
-    shell::terminal::write_stdout_line("");
-    for (const std::string &candidate : candidates) {
-        shell::terminal::write_stdout(format_completion_candidate(candidate) +
-                                      "  ");
+size_t print_completion_candidates(const std::vector<std::string> &items,
+                                   bool has_selected_candidate = false,
+                                   size_t selected_index = 0) {
+    if (items.empty()) {
+        return 0;
     }
+
+    const size_t term_cols =
+        shell::prompt::render_utils::get_terminal_columns();
+
+    std::vector<std::string> cleaned;
+    cleaned.reserve(items.size());
+    for (const std::string &item : items) {
+        cleaned.push_back(format_completion_candidate(item));
+    }
+
     shell::terminal::write_stdout_line("");
+
+    size_t max_width = 0;
+    for (const std::string &item : cleaned) {
+        max_width = std::max(max_width,
+                             prompt::render_utils::measure_display_width(item));
+    }
+
+    const size_t gutter = 2;
+    const size_t cell_width = max_width + gutter;
+    const size_t cols =
+        cell_width == 0
+            ? 1
+            : std::max<size_t>(1, (term_cols + gutter) / cell_width);
+    const size_t rows = (cleaned.size() + cols - 1) / cols;
+
+    for (size_t row = 0; row < rows; ++row) {
+        std::string line;
+
+        for (size_t col = 0; col < cols; ++col) {
+            const size_t index = row * cols + col;
+            if (index >= cleaned.size()) {
+                break;
+            }
+
+            const std::string &item = cleaned[index];
+            const bool is_selected =
+                has_selected_candidate && index == selected_index;
+
+            if (!is_selected) {
+                line += item;
+
+                if (col + 1 < cols && index + 1 < cleaned.size()) {
+                    const size_t padding =
+                        cell_width -
+                        prompt::render_utils::measure_display_width(item);
+                    line.append(padding, ' ');
+                }
+                continue;
+            }
+
+            std::string highlighted_cell =
+                format_completion_candidate(items[index], false);
+            const size_t highlighted_width =
+                prompt::render_utils::measure_display_width(highlighted_cell);
+            const size_t padding = cell_width > highlighted_width
+                                       ? cell_width - highlighted_width
+                                       : 0;
+            highlighted_cell.append(padding, ' ');
+
+            line += reverse_video + highlighted_cell + reset;
+        }
+
+        shell::terminal::write_stdout_line(line);
+    }
+    return rows + 1;
 }
 
 std::string normalize_paste_for_single_line(const std::string &text) {
@@ -140,8 +218,178 @@ std::string normalize_paste_for_single_line(const std::string &text) {
     return normalized;
 }
 
-void redraw_if_changed(const InputContext &context, bool changed,
+bool has_rendered_completion_menu(const InputContext &context) {
+    return context.completion_render_state.rows > 0;
+}
+
+bool has_active_completion_selection(const InputContext &context) {
+    return context.session.completion.active;
+}
+
+void reset_completion_menu_render_state(InputContext &context) {
+    context.completion_render_state = {};
+}
+
+void clear_completion_menu_and_prompt_block(const InputContext &context) {
+    const size_t columns = context.render_state.terminal_columns;
+    const prompt::render_utils::RenderMetrics metrics =
+        prompt::render_utils::measure_render_state(context.render_state,
+                                                   columns);
+    const size_t rows_above_cursor = metrics.header_rows + metrics.cursor_row;
+    const size_t rows_to_clear =
+        metrics.total_rows + context.completion_render_state.rows;
+
+    shell::terminal::write_stdout(prompt::render_utils::clear_render_block(
+        rows_above_cursor, rows_to_clear));
+}
+
+prompt::render_utils::CursorGeometry
+input_cursor_geometry(const InputContext &context, size_t columns) {
+    const bool cursor_at_line_end = context.render_state.cursor_display_width ==
+                                    context.render_state.input_display_width;
+
+    return prompt::render_utils::compute_cursor_geometry(
+        context.render_state.prompt_prefix_display_width,
+        context.render_state.cursor_display_width, columns, cursor_at_line_end);
+}
+
+prompt::render_utils::CursorGeometry
+input_end_geometry(const InputContext &context, size_t columns) {
+    return prompt::render_utils::compute_cursor_geometry(
+        context.render_state.prompt_prefix_display_width,
+        context.render_state.input_display_width, columns, true);
+}
+
+std::string restore_input_cursor(const InputContext &context, size_t columns,
+                                 size_t rows_below_input_end) {
+    const prompt::render_utils::CursorGeometry cursor =
+        input_cursor_geometry(context, columns);
+    const prompt::render_utils::CursorGeometry end =
+        input_end_geometry(context, columns);
+
+    std::string frame = "\r";
+    const size_t current_row = end.row + rows_below_input_end;
+    if (current_row > cursor.row) {
+        frame += "\033[" + std::to_string(current_row - cursor.row) + "A";
+    } else if (cursor.row > current_row) {
+        frame += "\033[" + std::to_string(cursor.row - current_row) + "B";
+    }
+    if (cursor.column > 0) {
+        frame += "\033[" + std::to_string(cursor.column) + "C";
+    }
+    return frame;
+}
+
+std::string move_from_cursor_to_input_end(const InputContext &context,
+                                          size_t columns) {
+    const size_t cursor_row = prompt::render_utils::measure_render_state(
+                                  context.render_state, columns)
+                                  .cursor_row;
+    const size_t end_row = input_end_geometry(context, columns).row;
+
+    std::string frame;
+    if (end_row > cursor_row) {
+        frame += "\033[" + std::to_string(end_row - cursor_row) + "B";
+    } else if (cursor_row > end_row) {
+        frame += "\033[" + std::to_string(cursor_row - end_row) + "A";
+    }
+    frame += "\r";
+    return frame;
+}
+
+std::string move_from_cursor_to_menu_start(const InputContext &context,
+                                           size_t columns) {
+    const size_t cursor_row = prompt::render_utils::measure_render_state(
+                                  context.render_state, columns)
+                                  .cursor_row;
+    const size_t end_row = input_end_geometry(context, columns).row;
+
+    std::string frame;
+    if (end_row > cursor_row) {
+        frame += "\033[" + std::to_string(end_row - cursor_row) + "B";
+    } else if (cursor_row > end_row) {
+        frame += "\033[" + std::to_string(cursor_row - end_row) + "A";
+    }
+    frame += "\033[1B";
+    frame += "\r";
+    return frame;
+}
+
+void render_completion_menu_below_prompt(InputContext &context) {
+    const size_t columns = context.render_state.terminal_columns;
+    shell::terminal::write_stdout(
+        move_from_cursor_to_input_end(context, columns));
+
+    const bool has_selected_candidate =
+        context.session.completion.active &&
+        context.session.completion.preview_active &&
+        !context.session.completion.candidates.empty();
+    const size_t selected_index =
+        has_selected_candidate
+            ? context.session.completion.selected_index %
+                  context.session.completion.candidates.size()
+            : 0;
+
+    const size_t rendered_rows =
+        print_completion_candidates(context.session.completion.candidates,
+                                    has_selected_candidate, selected_index);
+    context.completion_render_state.rows = rendered_rows;
+    shell::terminal::write_stdout(
+        restore_input_cursor(context, columns, rendered_rows));
+}
+
+void redraw_completion_menu_only(InputContext &context) {
+    if (!has_rendered_completion_menu(context)) {
+        render_completion_menu_below_prompt(context);
+        return;
+    }
+
+    const size_t columns = context.render_state.terminal_columns;
+    const size_t previous_rows = context.completion_render_state.rows;
+
+    std::string frame = move_from_cursor_to_menu_start(context, columns);
+    frame += prompt::render_utils::clear_render_block(0, previous_rows);
+    frame += "\033[1A\r";
+    shell::terminal::write_stdout(frame);
+
+    render_completion_menu_below_prompt(context);
+}
+
+void dismiss_completion_menu(InputContext &context) {
+    if (!has_rendered_completion_menu(context)) {
+        return;
+    }
+
+    const size_t columns = context.render_state.terminal_columns;
+    const size_t rendered_rows = context.completion_render_state.rows;
+    std::string frame = move_from_cursor_to_menu_start(context, columns);
+    frame += prompt::render_utils::clear_render_block(0, rendered_rows);
+    frame += restore_input_cursor(context, columns, 1);
+    shell::terminal::write_stdout(frame);
+    reset_completion_menu_render_state(context);
+}
+
+void hide_completion_menu_and_redraw(InputContext &context,
+                                     bool full_prompt = false) {
+    dismiss_completion_menu(context);
+    redraw_buffer(context, full_prompt);
+}
+
+void redraw_completion_menu_and_prompt(InputContext &context) {
+    clear_completion_menu_and_prompt_block(context);
+    reset_completion_menu_render_state(context);
+    redraw_buffer(context, true);
+    render_completion_menu_below_prompt(context);
+}
+
+void redraw_if_changed(InputContext &context, bool changed,
                        bool full_prompt = false) {
+    if (has_rendered_completion_menu(context) &&
+        !has_active_completion_selection(context)) {
+        hide_completion_menu_and_redraw(context);
+        return;
+    }
+
     if (!changed) {
         return;
     }
@@ -204,7 +452,34 @@ void insert_input_text(InputContext &context, const std::string &text) {
                                             context.history_size, text));
 }
 
+void handle_completion_selection_escape(InputContext &context) {
+    const bool changed = session_state::cancel_completion_selection(
+        context.session, context.buffer, context.history_size);
+    if (has_rendered_completion_menu(context)) {
+        hide_completion_menu_and_redraw(context);
+        return;
+    }
+
+    redraw_if_changed(context, changed);
+}
+
 void handle_tab_completion(InputContext &context) {
+    if (has_active_completion_selection(context)) {
+        const bool changed = session_state::cycle_completion_selection(
+            context.session, context.buffer, context.history_size);
+        if (!changed) {
+            return;
+        }
+
+        if (has_rendered_completion_menu(context)) {
+            redraw_buffer(context);
+            redraw_completion_menu_only(context);
+        } else {
+            redraw_if_changed(context, true);
+        }
+        return;
+    }
+
     const features::CompletionResult completion = features::complete_at_cursor(
         context.state, context.buffer.text, context.buffer.cursor);
 
@@ -219,8 +494,10 @@ void handle_tab_completion(InputContext &context) {
         return;
     case features::CompletionAction::ShowCandidates:
         session_state::note_non_kill_command(context.session);
-        print_completion_candidates(completion.candidates);
-        redraw_buffer(context, true);
+        session_state::begin_completion_selection(
+            context.session, context.buffer, completion.replace_begin,
+            completion.replace_end, completion.candidates);
+        render_completion_menu_below_prompt(context);
         return;
     }
 }
@@ -377,17 +654,6 @@ KeyHandlingResult handle_special_key(InputContext &context,
     return KeyHandlingResult::Ignore;
 }
 
-KeyHandlingResult handle_key_event(InputContext &context,
-                                   const key::InputEvent &event) {
-    const KeyHandlingResult character_result =
-        handle_character_key(context, event);
-    if (character_result != KeyHandlingResult::Ignore) {
-        return character_result;
-    }
-
-    return handle_special_key(context, event);
-}
-
 InputResult read_interactive_fallback_command_line() {
     InputResult result{};
 
@@ -443,8 +709,8 @@ InputResult read_command_line(shell::ShellState &state,
     session_state::EditorSessionState session{};
     const size_t history_size = state.history.size();
     session_state::initialize_editor_session(session, history_size);
-    InputContext context{state,   render_state, buffer,
-                         session, history_size, result};
+    InputContext context{state,        render_state, buffer, session,
+                         history_size, result,       {}};
 
     InputSession input_session{};
     if (!begin_input_session(input_session)) {
@@ -460,9 +726,33 @@ InputResult read_command_line(shell::ShellState &state,
         }
 
         if (event.kind == key::InputEventKind::Interrupted) {
-            shell::prompt::finalize_interrupted_input_line(render_state);
+            clear_completion_menu_and_prompt_block(context);
+            reset_completion_menu_render_state(context);
+            render_state = {};
             result.interrupted = true;
             break;
+        }
+
+        if (has_active_completion_selection(context)) {
+            if (event.kind == key::InputEventKind::Key &&
+                event.key == key::EditorKey::Escape) {
+                handle_completion_selection_escape(context);
+                continue;
+            }
+
+            if (event.kind == key::InputEventKind::Key &&
+                event.key == key::EditorKey::Enter) {
+                session_state::confirm_completion_selection(context.session);
+                hide_completion_menu_and_redraw(context);
+                continue;
+            }
+
+            if (event.kind != key::InputEventKind::Ignored &&
+                !(event.kind == key::InputEventKind::Key &&
+                  event.key == key::EditorKey::Tab) &&
+                event.kind != key::InputEventKind::Resized) {
+                session_state::confirm_completion_selection(context.session);
+            }
         }
 
         switch (event.kind) {
@@ -474,7 +764,12 @@ InputResult read_command_line(shell::ShellState &state,
                               normalize_paste_for_single_line(event.text));
             continue;
         case key::InputEventKind::Key: {
-            switch (handle_key_event(context, event)) {
+            KeyHandlingResult key_result = handle_character_key(context, event);
+            if (key_result == KeyHandlingResult::Ignore) {
+                key_result = handle_special_key(context, event);
+            }
+
+            switch (key_result) {
             case KeyHandlingResult::ContinueLoop:
             case KeyHandlingResult::Ignore:
                 continue;
@@ -484,7 +779,12 @@ InputResult read_command_line(shell::ShellState &state,
             break;
         }
         case key::InputEventKind::Resized:
-            redraw_buffer(context);
+            if (has_rendered_completion_menu(context) &&
+                has_active_completion_selection(context)) {
+                redraw_completion_menu_and_prompt(context);
+            } else {
+                redraw_buffer(context);
+            }
             continue;
         case key::InputEventKind::Ignored:
             continue;

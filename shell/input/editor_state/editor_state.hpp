@@ -56,9 +56,14 @@ struct KillResult {
 
 bool apply_movement(LineBuffer &buffer, Movement movement);
 
+bool restore_buffer(LineBuffer &buffer, const std::string &text, size_t cursor);
 bool insert_text(LineBuffer &buffer, const std::string &in);
 bool replace_range(LineBuffer &buffer, size_t replace_begin, size_t replace_end,
                    const std::string &replacement);
+bool replace_range_from_anchor(LineBuffer &buffer,
+                               const std::string &anchor_text,
+                               size_t replace_begin, size_t replace_end,
+                               const std::string &replacement);
 bool apply_erase(LineBuffer &buffer, Erase erase_action);
 KillResult apply_kill(LineBuffer &buffer, Kill kill_action);
 

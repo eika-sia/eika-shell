@@ -195,4 +195,61 @@ bool apply_history_navigation(EditorSessionState &session,
                                                   session.history);
 }
 
+void begin_completion_selection(EditorSessionState &session,
+                                const editor_state::LineBuffer &buffer,
+                                size_t replace_begin, size_t replace_end,
+                                std::vector<std::string> candidates) {
+    session.completion = {};
+
+    session.completion = {
+        true,          false,       buffer.text,           buffer.cursor,
+        replace_begin, replace_end, std::move(candidates), 0};
+}
+
+bool cycle_completion_selection(EditorSessionState &session,
+                                editor_state::LineBuffer &buffer,
+                                size_t history_size) {
+    if (!session.completion.active || session.completion.candidates.empty())
+        return false;
+    note_non_kill_command(session);
+
+    prepare_for_buffer_edit(session, history_size);
+
+    if (!session.completion.preview_active) {
+        session.completion.preview_active = true;
+    } else {
+        session.completion.selected_index++;
+        session.completion.selected_index %=
+            session.completion.candidates.size();
+    }
+
+    return editor_state::replace_range_from_anchor(
+        buffer, session.completion.anchor_text,
+        session.completion.replace_begin, session.completion.replace_end,
+        session.completion.candidates[session.completion.selected_index]);
+}
+
+bool cancel_completion_selection(EditorSessionState &session,
+                                 editor_state::LineBuffer &buffer,
+                                 size_t history_size) {
+    if (!session.completion.active)
+        return false;
+
+    if (session.completion.preview_active) {
+        prepare_for_buffer_edit(session, history_size);
+        bool changed =
+            editor_state::restore_buffer(buffer, session.completion.anchor_text,
+                                         session.completion.anchor_cursor);
+        session.completion = {};
+        return changed;
+    }
+
+    session.completion = {};
+    return false;
+}
+
+void confirm_completion_selection(EditorSessionState &session) {
+    session.completion = {};
+}
+
 } // namespace shell::input::session_state
