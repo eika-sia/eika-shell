@@ -130,6 +130,14 @@ std::string clear_render_block(size_t rows_above_cursor, size_t rows_to_clear) {
     return frame;
 }
 
+std::string clear_rendered_prompt_block(const InputRenderState &render_state,
+                                        size_t rows_below_prompt) {
+    const size_t columns = render_state.terminal_columns;
+    const RenderMetrics metrics = measure_render_state(render_state, columns);
+    return clear_render_block(metrics.header_rows + metrics.cursor_row,
+                              metrics.total_rows + rows_below_prompt);
+}
+
 std::string clear_previous_input_block(const InputRenderState &render_state,
                                        size_t columns) {
     const RenderMetrics metrics = measure_render_state(render_state, columns);

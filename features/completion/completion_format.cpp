@@ -14,6 +14,14 @@ bool needs_unquoted_escape(char c) {
     case '|':
     case '&':
     case ';':
+    case '(':
+    case ')':
+    case '[':
+    case ']':
+    case '{':
+    case '}':
+    case '*':
+    case '?':
     case '<':
     case '>':
         return true;
@@ -100,6 +108,25 @@ std::string get_basename_part(const std::string &token) {
     }
 
     return token.substr(pos + 1);
+}
+
+std::string format_completion_display_label(const std::string &candidate) {
+    if (candidate.empty()) {
+        return candidate;
+    }
+
+    const bool has_trailing_slash = candidate.back() == '/';
+    std::string basename_source = candidate;
+    if (has_trailing_slash && candidate.size() > 1) {
+        basename_source.pop_back();
+    }
+
+    const std::string basename = get_basename_part(basename_source);
+    if (basename.empty()) {
+        return has_trailing_slash ? "/" : candidate;
+    }
+
+    return has_trailing_slash ? basename + "/" : basename;
 }
 
 } // namespace features

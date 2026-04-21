@@ -39,6 +39,8 @@ size_t compute_rendered_rows(size_t base_column, size_t display_width,
 RenderMetrics measure_render_state(const InputRenderState &render_state,
                                    size_t columns);
 std::string clear_render_block(size_t rows_above_cursor, size_t rows_to_clear);
+std::string clear_rendered_prompt_block(const InputRenderState &render_state,
+                                        size_t rows_below_prompt = 0);
 std::string clear_previous_input_block(const InputRenderState &render_state,
                                        size_t columns);
 std::string clear_previous_prompt_block(const InputRenderState &render_state,

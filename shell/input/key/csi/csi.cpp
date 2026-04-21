@@ -171,6 +171,8 @@ InputEvent decode(DecodeContext &context) {
         return make_special_key_event(EditorKey::Home, modifiers);
     case 'F':
         return make_special_key_event(EditorKey::End, modifiers);
+    case 'Z':
+        return make_special_key_event(EditorKey::Tab, modifiers | KeyModShift);
     case '~':
         if (params.empty()) {
             return make_ignored_event();
@@ -182,8 +184,8 @@ InputEvent decode(DecodeContext &context) {
                 return make_ignored_event();
             }
 
-            return decode_modified_codepoint(
-                params[2], decode_csi_modifiers(params[1]));
+            return decode_modified_codepoint(params[2],
+                                             decode_csi_modifiers(params[1]));
         case 1:
         case 7:
             return make_special_key_event(EditorKey::Home, modifiers);

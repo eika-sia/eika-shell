@@ -15,12 +15,26 @@ enum class CompletionAction {
     ShowCandidates,
 };
 
+enum class CompletionDisplayKind {
+    Plain,
+    Directory,
+    Executable,
+    Builtin,
+    Alias,
+};
+
+struct CompletionDisplayCandidate {
+    std::string text;
+    CompletionDisplayKind kind = CompletionDisplayKind::Plain;
+};
+
 struct CompletionResult {
     CompletionAction action = CompletionAction::None;
     size_t replace_begin = 0;
     size_t replace_end = 0;
     std::string replacement;
     std::vector<std::string> candidates;
+    std::vector<CompletionDisplayCandidate> display_candidates;
 };
 
 CompletionResult complete_at_cursor(const shell::ShellState &state,

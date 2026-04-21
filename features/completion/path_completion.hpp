@@ -1,5 +1,7 @@
 #pragma once
 
+#include "completion.hpp"
+
 #include <string>
 #include <vector>
 
@@ -11,7 +13,12 @@ namespace features {
 
 struct CompletionCandidate {
     std::string text;
-    bool is_directory = false;
+    CompletionDisplayKind kind = CompletionDisplayKind::Plain;
+};
+
+struct PathCompletionOptions {
+    bool keep_current_dir_prefix = false;
+    bool executable_only = false;
 };
 
 std::string expand_tilde_prefix(const shell::ShellState &state,
@@ -19,7 +26,7 @@ std::string expand_tilde_prefix(const shell::ShellState &state,
 bool looks_like_path_token(const std::string &token);
 std::vector<CompletionCandidate>
 complete_path_token(const shell::ShellState &state, const std::string &token,
-                    bool keep_current_dir_prefix = false);
+                    PathCompletionOptions options = {});
 std::vector<CompletionCandidate>
 complete_command_token(const shell::ShellState &state,
                        const std::string &token);

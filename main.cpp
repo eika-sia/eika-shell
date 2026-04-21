@@ -52,18 +52,21 @@ int main(int argc, char **argv) {
         return status;
     }
 
+    bool prompt_already_rendered = false;
     while (state.running) {
         process::cleanup_finished_processes(state);
 
-        if (state.interactive) {
+        if (state.interactive && !prompt_already_rendered) {
             shell::terminal::write_stdout(
                 shell::prompt::build_prompt(state, prompt_render_state));
         }
+        prompt_already_rendered = false;
 
         shell::input::InputResult input =
             shell::input::read_command_line(state, prompt_render_state);
 
         if (input.interrupted) {
+            prompt_already_rendered = input.prompt_rendered;
             continue;
         }
         if (input.eof) {

@@ -21,5 +21,6 @@ format_completion_replacement(const std::string &logical_text,
                               const CompletionFormatOptions &options);
 
 std::string get_basename_part(const std::string &token);
+std::string format_completion_display_label(const std::string &candidate);
 
 } // namespace features

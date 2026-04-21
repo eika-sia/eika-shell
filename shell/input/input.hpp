@@ -16,6 +16,7 @@ struct InputResult {
     std::string line;
     bool eof = false;
     bool interrupted = false;
+    bool prompt_rendered = false;
 };
 
 InputResult read_command_line(shell::ShellState &state,

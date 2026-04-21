@@ -32,6 +32,7 @@ void update_input_render_state(InputRenderState &render_state,
     render_state.input_display_width = input_display_width;
     render_state.cursor_display_width = cursor_display_width;
     render_state.terminal_columns = terminal_columns;
+    render_state.needs_full_redraw = false;
 }
 
 render_utils::RenderedFragment build_prompt_prefix() {
@@ -53,20 +54,23 @@ std::string build_prompt(const shell::ShellState &state,
     update_input_render_state(render_state, header.rendered,
                               header.display_width, prefix.display_width, 0, 0,
                               render_utils::get_terminal_columns());
+    render_state.needs_full_redraw = true;
     return header.rendered + "\n" + prefix.rendered;
 }
 
-void redraw_input_line(InputRenderState &render_state,
-                       const shell::ShellState &state, const std::string &line,
-                       size_t cursor, bool full_prompt) {
+InputFrame build_redraw_input_frame(const InputRenderState &current_render_state,
+                                    const shell::ShellState &state,
+                                    const std::string &line, size_t cursor,
+                                    bool full_prompt) {
     const size_t columns = render_utils::get_terminal_columns();
-    const bool terminal_resized = columns != render_state.terminal_columns;
-    const bool redraw_full_prompt = full_prompt || terminal_resized;
+    const bool terminal_resized = columns != current_render_state.terminal_columns;
+    const bool redraw_full_prompt =
+        full_prompt || terminal_resized || current_render_state.needs_full_redraw;
     const prompt_header::HeaderInfo header_info =
         redraw_full_prompt
             ? build_header_info(state)
-            : prompt_header::HeaderInfo{render_state.header_rendered,
-                                        render_state.header_display_width};
+            : prompt_header::HeaderInfo{current_render_state.header_rendered,
+                                        current_render_state.header_display_width};
     const render_utils::RenderedFragment prefix_info = build_prompt_prefix();
     const std::string header = redraw_full_prompt ? header_info.rendered : "";
     const std::string prefix = redraw_full_prompt
@@ -88,58 +92,49 @@ void redraw_input_line(InputRenderState &render_state,
             prefix_info.display_width, cursor_display_width, columns,
             cursor_display_width == line_display_width);
 
-    std::string frame;
-    if (full_prompt) {
-        frame = "\r\033[2K";
-    } else if (terminal_resized) {
-        frame = render_utils::clear_previous_prompt_block(
-            render_state, render_state.terminal_columns, columns);
+    InputFrame result;
+    result.next_render_state = current_render_state;
+
+    if (redraw_full_prompt) {
+        if (terminal_resized) {
+            result.frame = render_utils::clear_previous_prompt_block(
+                current_render_state, current_render_state.terminal_columns,
+                columns);
+        } else {
+            result.frame =
+                render_utils::clear_rendered_prompt_block(current_render_state);
+        }
     } else {
-        frame = render_utils::clear_previous_input_block(render_state, columns);
+        result.frame =
+            render_utils::clear_previous_input_block(current_render_state,
+                                                     columns);
     }
-    frame += prefix;
-    frame += rendered;
+    result.frame += prefix;
+    result.frame += rendered;
 
     if (end.row > cursor_geometry.row) {
-        frame += "\033[" + std::to_string(end.row - cursor_geometry.row) + "A";
+        result.frame += "\033[" + std::to_string(end.row - cursor_geometry.row) +
+                        "A";
     }
-    frame += "\r";
+    result.frame += "\r";
     if (cursor_geometry.column > 0) {
-        frame += "\033[" + std::to_string(cursor_geometry.column) + "C";
+        result.frame += "\033[" + std::to_string(cursor_geometry.column) + "C";
     }
 
-    shell::terminal::write_stdout(frame);
-    update_input_render_state(render_state, header_info.rendered,
+    update_input_render_state(result.next_render_state, header_info.rendered,
                               header_info.display_width,
                               prefix_info.display_width, line_display_width,
                               cursor_display_width, columns);
+    return result;
 }
 
-void finalize_interrupted_input_line(InputRenderState &render_state) {
-    const size_t columns = render_state.terminal_columns;
-    const size_t cursor_row = render_utils::compute_cursor_geometry(
-                                  render_state.prompt_prefix_display_width,
-                                  render_state.cursor_display_width, columns,
-                                  render_state.cursor_display_width ==
-                                      render_state.input_display_width)
-                                  .row;
-    const size_t end_row = render_state.input_display_width == 0
-                               ? 0
-                               : render_utils::compute_render_end_geometry(
-                                     render_state.prompt_prefix_display_width,
-                                     render_state.input_display_width, columns)
-                                     .row;
-
-    std::string tail_newlines;
-    for (size_t i = cursor_row; i < end_row; ++i) {
-        tail_newlines += '\n';
-    }
-
-    if (!tail_newlines.empty()) {
-        shell::terminal::write_stdout(tail_newlines);
-    }
-
-    reset_input_render_state(render_state);
+void redraw_input_line(InputRenderState &render_state,
+                       const shell::ShellState &state, const std::string &line,
+                       size_t cursor, bool full_prompt) {
+    InputFrame frame = build_redraw_input_frame(render_state, state, line, cursor,
+                                                full_prompt);
+    shell::terminal::write_stdout(frame.frame);
+    render_state = std::move(frame.next_render_state);
 }
 
 } // namespace shell::prompt

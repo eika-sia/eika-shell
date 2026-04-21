@@ -4,12 +4,13 @@
 #include <algorithm>
 #include <dirent.h>
 #include <filesystem>
-#include <set>
+#include <map>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
+#include "../../builtins/builtins.hpp"
 #include "../../builtins/env/env.hpp"
 
 namespace features {
@@ -61,6 +62,36 @@ bool is_directory(const std::string &path) {
     }
 
     return S_ISDIR(s.st_mode);
+}
+
+bool is_executable_file(const std::string &path) {
+    return access(path.c_str(), X_OK) == 0 && !is_directory(path);
+}
+
+int command_candidate_priority(CompletionDisplayKind kind) {
+    switch (kind) {
+    case CompletionDisplayKind::Alias:
+        return 3;
+    case CompletionDisplayKind::Builtin:
+        return 2;
+    case CompletionDisplayKind::Executable:
+        return 1;
+    case CompletionDisplayKind::Plain:
+    case CompletionDisplayKind::Directory:
+        return 0;
+    }
+
+    return 0;
+}
+
+void record_command_candidate(
+    std::map<std::string, CompletionDisplayKind> &matches,
+    const std::string &name, CompletionDisplayKind kind) {
+    const auto [it, inserted] = matches.emplace(name, kind);
+    if (!inserted && command_candidate_priority(kind) >
+                         command_candidate_priority(it->second)) {
+        it->second = kind;
+    }
 }
 
 template <typename Callback>
@@ -129,7 +160,7 @@ bool looks_like_path_token(const std::string &token) {
 std::vector<CompletionCandidate>
 complete_path_token(const shell::ShellState &state,
                     const std::string &logical_prefix,
-                    bool preserve_dot_slash) {
+                    PathCompletionOptions options) {
     std::vector<CompletionCandidate> results;
 
     const std::string dir_part = get_directory_part(logical_prefix);
@@ -138,22 +169,30 @@ complete_path_token(const shell::ShellState &state,
 
     for (const std::string &name :
          list_directory_matches(expanded_dir, base_part)) {
-        CompletionCandidate c{};
+        const std::string full_path = (dir_part == ".") ? ("./" + name)
+                                      : (dir_part == "/")
+                                          ? ("/" + name)
+                                          : (expanded_dir + "/" + name);
 
+        const bool candidate_is_directory = is_directory(full_path);
+        const bool candidate_is_executable = is_executable_file(full_path);
+        if (options.executable_only && !candidate_is_directory &&
+            !candidate_is_executable) {
+            continue;
+        }
+
+        CompletionCandidate c{};
         if (dir_part == ".") {
-            c.text = preserve_dot_slash ? "./" + name : name;
+            c.text = options.keep_current_dir_prefix ? "./" + name : name;
         } else if (dir_part == "/") {
             c.text = "/" + name;
         } else {
             c.text = dir_part + "/" + name;
         }
 
-        const std::string full_path = (dir_part == ".") ? ("./" + name)
-                                      : (dir_part == "/")
-                                          ? ("/" + name)
-                                          : (expanded_dir + "/" + name);
-
-        c.is_directory = is_directory(full_path);
+        c.kind = candidate_is_directory   ? CompletionDisplayKind::Directory
+                 : candidate_is_executable ? CompletionDisplayKind::Executable
+                                           : CompletionDisplayKind::Plain;
         results.push_back(std::move(c));
     }
 
@@ -163,7 +202,7 @@ complete_path_token(const shell::ShellState &state,
 std::vector<CompletionCandidate>
 complete_command_token(const shell::ShellState &state,
                        const std::string &logical_prefix) {
-    std::set<std::string> unique_matches;
+    std::map<std::string, CompletionDisplayKind> unique_matches;
 
     for_each_path_directory(state, [&](const std::string &dir) {
         std::vector<std::string> names =
@@ -172,19 +211,35 @@ complete_command_token(const shell::ShellState &state,
         for (const std::string &name : names) {
             const std::string full_path = dir + "/" + name;
 
-            if (access(full_path.c_str(), X_OK) == 0 &&
-                !is_directory(full_path)) {
-                unique_matches.insert(name);
+            if (is_executable_file(full_path)) {
+                record_command_candidate(unique_matches, name,
+                                         CompletionDisplayKind::Executable);
             }
         }
 
         return false;
     });
 
-    std::vector<CompletionCandidate> result;
+    for (const std::string &name : builtins::builtin_names()) {
+        if (name.compare(0, logical_prefix.size(), logical_prefix) == 0) {
+            record_command_candidate(unique_matches, name,
+                                     CompletionDisplayKind::Builtin);
+        }
+    }
 
-    for (std::string match : unique_matches) {
-        result.push_back(CompletionCandidate{match, false});
+    for (const auto &[name, value] : state.alias) {
+        (void)value;
+        if (name.compare(0, logical_prefix.size(), logical_prefix) == 0) {
+            record_command_candidate(unique_matches, name,
+                                     CompletionDisplayKind::Alias);
+        }
+    }
+
+    std::vector<CompletionCandidate> result;
+    result.reserve(unique_matches.size());
+
+    for (const auto &[match, kind] : unique_matches) {
+        result.push_back(CompletionCandidate{match, kind});
     }
     return result;
 }
@@ -215,7 +270,7 @@ bool path_is_executable_file(const shell::ShellState &state,
 
     const std::string resolved = p.string();
     return fs::exists(p) && fs::is_regular_file(p) &&
-           access(resolved.c_str(), X_OK) == 0;
+           is_executable_file(resolved);
 }
 
 std::string resolve_command_in_path(const shell::ShellState &state,
@@ -227,7 +282,7 @@ std::string resolve_command_in_path(const shell::ShellState &state,
     std::string resolved;
     for_each_path_directory(state, [&](const std::string &dir) {
         const std::string full_path = dir + "/" + token;
-        if (access(full_path.c_str(), X_OK) == 0 && !is_directory(full_path)) {
+        if (is_executable_file(full_path)) {
             resolved = full_path;
             return true;
         }

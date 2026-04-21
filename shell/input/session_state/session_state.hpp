@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "../../../features/completion/completion.hpp"
 #include "../editor_state/editor_state.hpp"
 
 namespace shell::input::session_state {
@@ -31,6 +32,7 @@ struct CompletionSelectionState {
     size_t replace_begin = 0;
     size_t replace_end = 0;
     std::vector<std::string> candidates;
+    std::vector<features::CompletionDisplayCandidate> display_candidates;
     size_t selected_index = 0;
 };
 
@@ -69,10 +71,12 @@ bool apply_history_navigation(EditorSessionState &session,
 void begin_completion_selection(EditorSessionState &session,
                                 const editor_state::LineBuffer &buffer,
                                 size_t replace_begin, size_t replace_end,
-                                std::vector<std::string> candidates);
-bool cycle_completion_selection(EditorSessionState &session,
-                                editor_state::LineBuffer &buffer,
-                                size_t history_size);
+                                std::vector<std::string> candidates,
+                                std::vector<features::CompletionDisplayCandidate>
+                                    display_candidates);
+bool step_completion_selection(EditorSessionState &session,
+                               editor_state::LineBuffer &buffer,
+                               size_t history_size, bool reverse = false);
 bool cancel_completion_selection(EditorSessionState &session,
                                  editor_state::LineBuffer &buffer,
                                  size_t history_size);

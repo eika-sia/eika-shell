@@ -1,9 +1,11 @@
 # Input Stack
 
 - `input.cpp` main orchestration and dispatching
+- `below_prompt_panel.cpp` generic cursor and frame helpers for panels rendered below the current prompt/input block
+- `completion_menu.cpp` renders and clears the completion candidate menu below the prompt
 - `key/` converts input bytes to semantic actions (like pasted text, escape sequences)
 - `editor_state/` mutates the line buffer and history browse state
-- `session_state/` handles per line stuff like a kill ring
+- `session_state/` handles per line stuff like a kill ring or active completion selection
 
 ## High-Level Pipeline
 
@@ -23,9 +25,11 @@ key::read_event()
 input::read_command_line()
     |
     +-- editor_state: pure buffer/history mutations
-    +-- session_state: kill ring, yank-pop, history invalidation
+    +-- session_state: kill ring, yank-pop, history invalidation, completion selection
     +-- completion: compute completion action
-    +-- prompt: redraw current input block
+    +-- prompt: build redraw frames for the input block
+    +-- below_prompt_panel: generic below-input panel frames
+    +-- completion_menu: render/dismiss candidate grid below the prompt
     v
 InputResult { line, eof, interrupted }
 ```
@@ -58,19 +62,18 @@ Key local types:
 - `InputSession`
   Owns the saved `termios` state and restores it on scope exit.
 - `InputContext`
-  Bundles the current shell state, render state, editable buffer, per line session state, initial history size, and output `InputResult`.
+  Bundles the current shell state, prompt render state, editable buffer, per line session state, completion-menu render state, initial history size, and output `InputResult`.
 
 The main loop does this:
 1. `key::read_event()` reads one semantic event.
 2. System events are handled first:
    - `ReadEof` -> finish with `eof = true`
-   - `Interrupted` -> finalize prompt block and finish with
-     `interrupted = true`
+   - `Interrupted` -> replace the rendered prompt/menu block with a fresh prompt and finish with `interrupted = true`
 3. Content events are dispatched:
    - `TextInput` -> insert text into the line buffer
    - `Paste` -> normalize newlines/tabs into spaces, then insert
    - `Key` -> route through character bindings or special-key bindings
-   - `Resized` -> redraw current buffer
+   - `Resized` -> clear and redraw the prompt, then redraw the completion menu if it is active
    - `Ignored` -> do nothing
 4. On finish, copy `buffer.text` into `InputResult.line`.
 
@@ -81,7 +84,8 @@ The main loop does this:
 - one line event loop
 - mapping key bindings to editor actions
 - paste normalization for a single-line editor
-- calling completion and choosing whether to redraw or print candidates
+- calling completion and deciding whether to replace text or open a completion-selection session
+- deciding when prompt redraws should include menu show/update/dismiss work
 - deciding when input is finished
 
 `input.cpp` should not own:
@@ -89,6 +93,7 @@ The main loop does this:
 - text buffer algorithms
 - kill ring internals
 - history browse internals
+- completion candidate layout or ANSI menu rendering
 
 ## `key/`: Terminal Byte Decoding
 
@@ -162,6 +167,7 @@ Current supported examples:
 - `ESC [ A` -> Up
 - `ESC [ 3 ~` -> Delete
 - `ESC [ 1 ; 5 D` -> Ctrl+Left
+- `ESC [ Z` -> Shift+Tab
 - `ESC [ 200 ~ ... ESC [ 201 ~` -> bracketed paste payload
 
 ### `ss3/`
@@ -191,6 +197,8 @@ These functions are intentionally narrow:
 - `apply_movement(...)`
 - `insert_text(...)`
 - `replace_range(...)`
+- `restore_buffer(...)`
+- `replace_range_from_anchor(...)`
 - `apply_erase(...)`
 - `apply_kill(...)`
 - `apply_history_navigation(...)`
@@ -226,6 +234,7 @@ Current session state:
 - kill ring entries
 - kill coalescing state
 - yank pop state
+- completion selection state
 
 ### Kill Ring Model
 
@@ -251,6 +260,24 @@ When a real edit happens while history browsing is active, `session_state` reset
 - the buffer layer stays pure
 - the session layer decides when browsing is invalidated
 
+### Completion Selection Model
+
+`CompletionSelectionState` stores:
+- whether a selection session is active
+- whether a preview has been applied to the buffer yet
+- the original anchor buffer text and cursor
+- the raw replacement range that completions target
+- the candidate list and selected index
+
+Behavior:
+- first ambiguous `Tab` starts a completion selection session and renders the menu
+- the first cycling `Tab` applies the first candidate as a preview from the anchor buffer
+- later `Tab`s rotate through candidates by rebuilding from the same anchor buffer
+- `Shift+Tab` reverses that rotation when the terminal reports it as a modified `Tab` event
+- `Esc` cancels and restores the anchor buffer
+- `Enter` accepts the currently previewed text but stays in the input editor
+- any ordinary edit or movement confirms the preview first, then continues with that command
+
 ## Completion in the Input Pipeline
 
 Completion lives in `features/completion`, but the input stack decides how to apply the result.
@@ -263,16 +290,28 @@ Completion lives in `features/completion`, but the input stack decides how to ap
 The input layer then chooses behavior:
 - `None` -> no text change
 - `ReplaceToken` -> replace a buffer range and redraw
-- `ShowCandidates` -> print the candidates, then redraw the full prompt/input
+- `ShowCandidates` -> begin a completion selection session and render the menu below the prompt
 
 ## Prompt Coupling
 
 The input stack depends on `shell::prompt::InputRenderState`, but the ownership is explicit.
 
-`input.cpp` never reaches into prompt globals because there are none. It only does 3 things:
-- initial prompt is built elsewhere
-- redraw current line through `prompt::redraw_input_line(...)`
-- finalize interrupted input through `prompt::finalize_interrupted_input_line(...)`
+The prompt layer now exposes 2 useful levels:
+- `prompt::redraw_input_line(...)` for ordinary prompt-only redraws
+- `prompt::build_redraw_input_frame(...)` when `input.cpp` needs to batch a prompt redraw together with completion-menu rendering into one terminal write
+
+That split matters because the completion menu sits below the prompt block. The prompt layer owns prompt geometry, while `completion_menu.cpp` owns menu geometry relative to the prompt.
+
+`below_prompt_panel.cpp` owns:
+- moving from the live input cursor to the row below the rendered input
+- restoring the live input cursor after a panel render
+- clearing or dismissing arbitrary panel rows below the prompt
+- clearing prompt-plus-panel blocks for resize and interrupt paths
+
+`completion_menu.cpp` owns:
+- candidate label styling and column layout
+- turning completion candidates into a generic below-prompt panel block
+- completion-specific styling such as directory coloring and selected reverse-video cells
 
 ## Current Binding Map
 
@@ -305,6 +344,7 @@ The bindings are intentionally implemented in `input.cpp`, not in `key/`.
 - `Home`, `End`
 - `Backspace`, `Delete`
 - `Tab` -> completion
+- `Shift+Tab` -> reverse completion cycling when completion selection is active
 - `Enter` -> finish line
 
 ## Resize, Interrupt, and EOF Behavior
@@ -313,13 +353,15 @@ The bindings are intentionally implemented in `input.cpp`, not in `key/`.
 
 - signal handler sets `g_resize_pending`
 - `key::read_event()` converts that into `InputEventKind::Resized`
-- `input.cpp` redraws the current buffer using the current render state
+- `input.cpp` clears the old prompt/menu block
+- it rebuilds the prompt with current terminal width
+- if completion selection is still active, it also rebuilds the menu under the resized prompt
 
 ### Interrupt
 
 - signal handler sets `g_input_interrupted`
 - `key::read_event()` converts that into `Interrupted`
-- `read_command_line()` finalizes the rendered input block and returns
+- `read_command_line()` clears the prompt/menu block, redraws a fresh prompt in the same frame, and returns
   `InputResult{ interrupted = true }`
 
 ### EOF
@@ -343,9 +385,17 @@ Use this rule set when adding features:
 - the feature depends on previous editor commands during the same line read
 - examples: kill-ring rotation, completion session state, search session state, undo groups
 
+### Add it to `completion_menu.cpp` if...
+- the change is about candidate layout or menu rendering under the prompt
+- examples: column packing, selection highlighting, menu pagination, prettier candidate labels, menu-specific cursor choreography
+
+### Add it to `below_prompt_panel.cpp` if...
+- the change is generic to any UI panel that lives below the prompt/input block
+- examples: generic cursor restore rules, panel clearing, prompt-plus-panel redraw framing
+
 ### Add it to `input.cpp` if...
 - the change is binding policy or top-level orchestration
-- examples: mapping `Ctrl+T` to transpose, deciding that repeated `Tab` cycles completion state, choosing what redraw happens after candidate output
+- examples: mapping `Ctrl+T` to transpose, deciding that repeated `Tab` cycles completion state, choosing when a key confirms or cancels completion preview
 
 ## Design Rules
 
@@ -353,6 +403,8 @@ These are the constraints the current refactor is trying to preserve:
 1. `key/` decodes terminal protocol, not shell syntax.
 2. `editor_state/` mutates text, not editor session behavior.
 3. `session_state/` owns kill/yank/history interaction rules.
-4. `input.cpp` is allowed to decide bindings and redraw policy.
-5. Prompt state must stay explicit.
-6. Raw mode lifetime stays in `input.cpp` with the line-read loop.
+4. `below_prompt_panel.cpp` owns generic below-prompt panel frames.
+5. `completion_menu.cpp` owns candidate-menu layout and completion-specific panel styling.
+6. `input.cpp` is allowed to decide bindings and redraw policy.
+7. Prompt state must stay explicit.
+8. Raw mode lifetime stays in `input.cpp` with the line-read loop.

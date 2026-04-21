@@ -1,6 +1,8 @@
 #pragma once
 
 #include <istream>
+#include <string>
+#include <vector>
 
 #include "../parser/parser.hpp"
 #include "../shell/shell.hpp"
@@ -44,5 +46,6 @@ int source_file(shell::ShellState &state, const std::string &path,
 int source_stream(shell::ShellState &state, std::istream &stream);
 
 bool is_builtin_name(const std::string &name);
+std::vector<std::string> builtin_names();
 
 } // namespace builtins

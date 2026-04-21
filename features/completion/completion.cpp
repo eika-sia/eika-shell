@@ -339,14 +339,46 @@ longest_common_prefix(const std::vector<CompletionCandidate> &matches) {
     return prefix;
 }
 
-std::vector<std::string>
-display_candidates(const std::vector<CompletionCandidate> &matches) {
+bool is_directory_candidate(const CompletionCandidate &candidate) {
+    return candidate.kind == CompletionDisplayKind::Directory;
+}
+
+std::string format_selection_candidate(
+    const CompletionCandidate &candidate, CompletionQuoteMode quote_mode) {
+    CompletionFormatOptions format{};
+    format.quote_mode = quote_mode;
+
+    std::string replacement =
+        format_completion_replacement(candidate.text, format);
+    if (is_directory_candidate(candidate)) {
+        replacement += "/";
+    }
+
+    return replacement;
+}
+
+std::vector<std::string> selection_candidates(
+    const std::vector<CompletionCandidate> &matches,
+    CompletionQuoteMode quote_mode) {
     std::vector<std::string> out;
     out.reserve(matches.size());
 
     for (const auto &m : matches) {
-        out.push_back(m.is_directory ? (m.text + "/") : m.text);
+        out.push_back(format_selection_candidate(m, quote_mode));
     }
+    return out;
+}
+
+std::vector<CompletionDisplayCandidate>
+display_candidates(const std::vector<CompletionCandidate> &matches) {
+    std::vector<CompletionDisplayCandidate> out;
+    out.reserve(matches.size());
+
+    for (const auto &m : matches) {
+        out.push_back(CompletionDisplayCandidate{
+            is_directory_candidate(m) ? (m.text + "/") : m.text, m.kind});
+    }
+
     return out;
 }
 
@@ -357,17 +389,17 @@ CompletionResult complete_at_cursor(const shell::ShellState &state,
     CompletionContext ctx = parse_completion_context(buf, cursor);
 
     std::vector<CompletionCandidate> matches;
-    if (ctx.role == CompletionTokenRole::CommandWord) {
+    const bool path_like = looks_like_path_token(ctx.logical_prefix) ||
+                           ctx.role == CompletionTokenRole::RedirectTarget;
+
+    if (ctx.role == CompletionTokenRole::CommandWord && !path_like) {
         matches = complete_command_token(state, ctx.logical_prefix);
     } else {
-        const bool path_like = looks_like_path_token(ctx.logical_prefix) ||
-                               ctx.role == CompletionTokenRole::RedirectTarget;
-        if (path_like) {
-            matches = complete_path_token(state, ctx.logical_prefix,
-                                          ctx.preserve_dot_slash);
-        } else {
-            matches = complete_path_token(state, ctx.logical_prefix, false);
-        }
+        PathCompletionOptions options{};
+        options.keep_current_dir_prefix = ctx.preserve_dot_slash;
+        options.executable_only =
+            ctx.role == CompletionTokenRole::CommandWord && path_like;
+        matches = complete_path_token(state, ctx.logical_prefix, options);
     }
 
     if (matches.empty()) {
@@ -383,12 +415,13 @@ CompletionResult complete_at_cursor(const shell::ShellState &state,
     format.is_directory = false;
     if (matches.size() == 1) {
         format.finalize = true;
-        format.is_directory = matches[0].is_directory;
+        format.is_directory = is_directory_candidate(matches[0]);
         return CompletionResult{
             CompletionAction::ReplaceToken,
             ctx.raw_begin,
             ctx.raw_end,
             format_completion_replacement(matches[0].text, format),
+            {},
             {}};
     }
 
@@ -398,11 +431,14 @@ CompletionResult complete_at_cursor(const shell::ShellState &state,
                                 ctx.raw_begin,
                                 ctx.raw_end,
                                 format_completion_replacement(lcp, format),
+                                {},
                                 {}};
     }
 
     return CompletionResult{CompletionAction::ShowCandidates, ctx.raw_begin,
-                            ctx.raw_end, "", display_candidates(matches)};
+                            ctx.raw_end, "",
+                            selection_candidates(matches, ctx.quote_mode),
+                            display_candidates(matches)};
 }
 
 } // namespace features

@@ -198,17 +198,25 @@ bool apply_history_navigation(EditorSessionState &session,
 void begin_completion_selection(EditorSessionState &session,
                                 const editor_state::LineBuffer &buffer,
                                 size_t replace_begin, size_t replace_end,
-                                std::vector<std::string> candidates) {
+                                std::vector<std::string> candidates,
+                                std::vector<features::CompletionDisplayCandidate>
+                                    display_candidates) {
     session.completion = {};
 
-    session.completion = {
-        true,          false,       buffer.text,           buffer.cursor,
-        replace_begin, replace_end, std::move(candidates), 0};
+    session.completion.active = true;
+    session.completion.preview_active = false;
+    session.completion.anchor_text = buffer.text;
+    session.completion.anchor_cursor = buffer.cursor;
+    session.completion.replace_begin = replace_begin;
+    session.completion.replace_end = replace_end;
+    session.completion.candidates = std::move(candidates);
+    session.completion.display_candidates = std::move(display_candidates);
+    session.completion.selected_index = 0;
 }
 
-bool cycle_completion_selection(EditorSessionState &session,
-                                editor_state::LineBuffer &buffer,
-                                size_t history_size) {
+bool step_completion_selection(EditorSessionState &session,
+                               editor_state::LineBuffer &buffer,
+                               size_t history_size, bool reverse) {
     if (!session.completion.active || session.completion.candidates.empty())
         return false;
     note_non_kill_command(session);
@@ -217,10 +225,23 @@ bool cycle_completion_selection(EditorSessionState &session,
 
     if (!session.completion.preview_active) {
         session.completion.preview_active = true;
+        if (reverse) {
+            session.completion.selected_index =
+                session.completion.candidates.size() - 1;
+        }
     } else {
-        session.completion.selected_index++;
-        session.completion.selected_index %=
-            session.completion.candidates.size();
+        if (reverse) {
+            if (session.completion.selected_index == 0) {
+                session.completion.selected_index =
+                    session.completion.candidates.size() - 1;
+            } else {
+                --session.completion.selected_index;
+            }
+        } else {
+            session.completion.selected_index++;
+            session.completion.selected_index %=
+                session.completion.candidates.size();
+        }
     }
 
     return editor_state::replace_range_from_anchor(
