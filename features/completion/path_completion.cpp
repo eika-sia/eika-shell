@@ -68,28 +68,11 @@ bool is_executable_file(const std::string &path) {
     return access(path.c_str(), X_OK) == 0 && !is_directory(path);
 }
 
-int command_candidate_priority(CompletionDisplayKind kind) {
-    switch (kind) {
-    case CompletionDisplayKind::Alias:
-        return 3;
-    case CompletionDisplayKind::Builtin:
-        return 2;
-    case CompletionDisplayKind::Executable:
-        return 1;
-    case CompletionDisplayKind::Plain:
-    case CompletionDisplayKind::Directory:
-        return 0;
-    }
-
-    return 0;
-}
-
 void record_command_candidate(
     std::map<std::string, CompletionDisplayKind> &matches,
     const std::string &name, CompletionDisplayKind kind) {
     const auto [it, inserted] = matches.emplace(name, kind);
-    if (!inserted && command_candidate_priority(kind) >
-                         command_candidate_priority(it->second)) {
+    if (!inserted && command_kind_rank(kind) < command_kind_rank(it->second)) {
         it->second = kind;
     }
 }
@@ -190,7 +173,7 @@ complete_path_token(const shell::ShellState &state,
             c.text = dir_part + "/" + name;
         }
 
-        c.kind = candidate_is_directory   ? CompletionDisplayKind::Directory
+        c.kind = candidate_is_directory    ? CompletionDisplayKind::Directory
                  : candidate_is_executable ? CompletionDisplayKind::Executable
                                            : CompletionDisplayKind::Plain;
         results.push_back(std::move(c));
@@ -213,7 +196,7 @@ complete_command_token(const shell::ShellState &state,
 
             if (is_executable_file(full_path)) {
                 record_command_candidate(unique_matches, name,
-                                         CompletionDisplayKind::Executable);
+                                         CompletionDisplayKind::Plain);
             }
         }
 

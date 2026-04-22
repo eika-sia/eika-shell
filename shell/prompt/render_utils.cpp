@@ -9,13 +9,35 @@
 
 namespace shell::prompt::render_utils {
 
-size_t get_terminal_columns() {
+namespace {
+
+winsize get_terminal_size() {
     struct winsize ws{};
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+        return ws;
+    }
+
+    return ws;
+}
+
+} // namespace
+
+size_t get_terminal_columns() {
+    const struct winsize ws = get_terminal_size();
+    if (ws.ws_col > 0) {
         return ws.ws_col;
     }
 
     return 80;
+}
+
+size_t get_terminal_rows() {
+    const struct winsize ws = get_terminal_size();
+    if (ws.ws_row > 0) {
+        return ws.ws_row;
+    }
+
+    return 24;
 }
 
 size_t measure_display_width(const std::string &text) {
@@ -93,11 +115,11 @@ RenderMetrics measure_render_state(const InputRenderState &render_state,
         render_state.cursor_display_width == render_state.input_display_width;
 
     RenderMetrics metrics;
-    metrics.header_rows = compute_rendered_rows(
-        0, render_state.header_display_width, columns);
-    metrics.input_rows = compute_rendered_rows(
-        render_state.prompt_prefix_display_width,
-        render_state.input_display_width, columns);
+    metrics.header_rows =
+        compute_rendered_rows(0, render_state.header_display_width, columns);
+    metrics.input_rows =
+        compute_rendered_rows(render_state.prompt_prefix_display_width,
+                              render_state.input_display_width, columns);
     metrics.total_rows = metrics.header_rows + metrics.input_rows;
     metrics.cursor_row =
         compute_cursor_geometry(render_state.prompt_prefix_display_width,

@@ -406,8 +406,21 @@ CompletionResult complete_at_cursor(const shell::ShellState &state,
         return {};
     }
 
-    std::sort(matches.begin(), matches.end(),
-              [](const auto &a, const auto &b) { return a.text < b.text; });
+    if (ctx.role == CompletionTokenRole::CommandWord && !path_like) {
+        std::sort(matches.begin(), matches.end(),
+                  [](const auto &a, const auto &b) {
+                      const int a_rank = command_kind_rank(a.kind);
+                      const int b_rank = command_kind_rank(b.kind);
+                      if (a_rank != b_rank) {
+                          return a_rank < b_rank;
+                      }
+
+                      return a.text < b.text;
+                  });
+    } else {
+        std::sort(matches.begin(), matches.end(),
+                  [](const auto &a, const auto &b) { return a.text < b.text; });
+    }
 
     CompletionFormatOptions format{};
     format.quote_mode = ctx.quote_mode;

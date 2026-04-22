@@ -23,6 +23,23 @@ enum class CompletionDisplayKind {
     Alias,
 };
 
+inline int command_kind_rank(CompletionDisplayKind kind) {
+    switch (kind) {
+    case CompletionDisplayKind::Alias:
+        return 0;
+    case CompletionDisplayKind::Builtin:
+        return 1;
+    case CompletionDisplayKind::Plain:
+        return 2;
+    case CompletionDisplayKind::Executable:
+        return 3;
+    case CompletionDisplayKind::Directory:
+        return 4;
+    }
+
+    return 5;
+}
+
 struct CompletionDisplayCandidate {
     std::string text;
     CompletionDisplayKind kind = CompletionDisplayKind::Plain;

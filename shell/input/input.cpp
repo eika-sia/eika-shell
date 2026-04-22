@@ -64,8 +64,21 @@ bool begin_input_session(InputSession &session) {
         static_cast<unsigned char>(session.saved_state_.c_cc[VERASE]));
 
     struct termios raw = session.saved_state_;
-    raw.c_lflag &= ~ICANON;
-    raw.c_lflag &= ~ECHO;
+
+    raw.c_iflag &= ~(IXON | IXOFF | ICRNL | INLCR | IGNCR | BRKINT | INPCK |
+                     ISTRIP | PARMRK);
+
+    raw.c_lflag &= ~(ICANON | ECHO | ECHOE | ECHOK | ECHONL | IEXTEN);
+
+    raw.c_cflag |= CS8;
+
+#ifdef VQUIT
+    raw.c_cc[VQUIT] = _POSIX_VDISABLE;
+#endif
+#ifdef VSUSP
+    raw.c_cc[VSUSP] = _POSIX_VDISABLE;
+#endif
+
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
 
@@ -305,7 +318,11 @@ void handle_tab_completion(InputContext &context, bool reverse = false) {
             context.session, context.buffer, completion.replace_begin,
             completion.replace_end, completion.candidates,
             completion.display_candidates);
-        render_completion_menu(context);
+        if (context.render_state.needs_full_redraw) {
+            redraw_with_completion_menu(context);
+        } else {
+            render_completion_menu(context);
+        }
         return;
     }
 }

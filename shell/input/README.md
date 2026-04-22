@@ -217,13 +217,13 @@ That is important because `editor_state` decides what text was removed, but `ses
 
 ### Word Semantics
 
-Word movement and word-kill behavior now follow shell-token boundaries rather than identifier boundaries.
+Word movement and word-kill behavior now use explicit editor-word boundaries instead of shell parsing rules.
 
 In practice that means:
-- shell separators like space, tab, `|`, `;`, `&`, `<`, `>` break words
-- paths like `foo/bar-baz.txt` stay one movement/kill unit
-- flags like `--long-option=value` stay one movement/kill unit
-- quoted or escaped separators are treated as part of the same shell word
+- word chars are ASCII letters, digits, and `_`
+- everything else is treated as a separator run
+- paths like `foo/bar-baz.txt` are traversed in smaller editor-friendly chunks
+- flags and assignments stop at punctuation instead of behaving like one shell token
 
 ## `session_state/`: Per-Line Interaction State
 
@@ -310,6 +310,7 @@ That split matters because the completion menu sits below the prompt block. The 
 
 `completion_menu.cpp` owns:
 - candidate label styling and column layout
+- candidate viewport truncation and footer/status rendering for long lists
 - turning completion candidates into a generic below-prompt panel block
 - completion-specific styling such as directory coloring and selected reverse-video cells
 

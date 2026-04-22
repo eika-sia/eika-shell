@@ -26,6 +26,7 @@ struct RenderMetrics {
 };
 
 size_t get_terminal_columns();
+size_t get_terminal_rows();
 size_t measure_display_width(const std::string &text);
 RenderedFragment make_rendered_fragment(std::string rendered);
 
@@ -44,8 +45,7 @@ std::string clear_rendered_prompt_block(const InputRenderState &render_state,
 std::string clear_previous_input_block(const InputRenderState &render_state,
                                        size_t columns);
 std::string clear_previous_prompt_block(const InputRenderState &render_state,
-                                        size_t old_columns,
-                                        size_t new_columns);
+                                        size_t old_columns, size_t new_columns);
 
 } // namespace render_utils
 } // namespace shell::prompt
