@@ -68,12 +68,11 @@ bool apply_history_navigation(EditorSessionState &session,
                               editor_state::HistoryNavigation navigation,
                               const std::vector<std::string> &history);
 
-void begin_completion_selection(EditorSessionState &session,
-                                const editor_state::LineBuffer &buffer,
-                                size_t replace_begin, size_t replace_end,
-                                std::vector<std::string> candidates,
-                                std::vector<features::CompletionDisplayCandidate>
-                                    display_candidates);
+void begin_completion_selection(
+    EditorSessionState &session, const editor_state::LineBuffer &buffer,
+    size_t replace_begin, size_t replace_end,
+    std::vector<std::string> candidates,
+    std::vector<features::CompletionDisplayCandidate> display_candidates);
 bool step_completion_selection(EditorSessionState &session,
                                editor_state::LineBuffer &buffer,
                                size_t history_size, bool reverse = false);

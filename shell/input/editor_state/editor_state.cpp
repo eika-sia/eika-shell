@@ -1,6 +1,10 @@
 #include "editor_state.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <optional>
+#include <vector>
 
 namespace shell::input::editor_state {
 namespace {
@@ -152,19 +156,71 @@ bool erase_at_cursor(LineBuffer &buffer) {
     return erase_range(buffer, buffer.cursor, buffer.cursor + 1);
 }
 
+std::vector<size_t>
+get_history_candidates(const std::vector<std::string> &history,
+                       std::string prefix) {
+    std::vector<size_t> res{};
+    for (size_t i = 0; i < history.size(); i++) {
+        if (prefix.empty() || history[i].rfind(prefix, 0) == 0)
+            res.push_back(i);
+    }
+    return res;
+}
+
+enum class Direction { Up, Down };
+
+std::optional<size_t>
+distinct_candidate(const std::vector<size_t> &candidate_index,
+                   const std::vector<std::string> &history,
+                   size_t current_index, Direction direction) {
+    auto curr = std::find(candidate_index.begin(), candidate_index.end(),
+                          current_index);
+
+    if (curr == candidate_index.end()) {
+        return std::nullopt;
+    }
+
+    const auto &current_entry = history[*curr];
+
+    if (direction == Direction::Up) {
+        for (auto it = std::make_reverse_iterator(curr);
+             it != candidate_index.rend(); ++it) {
+            if (history[*it] != current_entry) {
+                return *it;
+            }
+        }
+    } else {
+        for (auto it = std::next(curr); it != candidate_index.end(); ++it) {
+            if (history[*it] != current_entry) {
+                return *it;
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
 bool browse_history_up(LineBuffer &buffer,
                        const std::vector<std::string> &history,
                        HistoryBrowseState &history_state) {
-    if (history.empty()) {
+    std::string prefix =
+        history_state.active ? history_state.draft : buffer.text;
+    std::vector<size_t> candidate_index =
+        get_history_candidates(history, prefix);
+
+    if (candidate_index.empty()) {
         return false;
     }
 
     if (!history_state.active) {
         history_state.draft = buffer.text;
         history_state.active = true;
-        history_state.index = history.size() - 1;
+        history_state.index = candidate_index[candidate_index.size() - 1];
     } else if (history_state.index > 0) {
-        --history_state.index;
+        if (auto prev = distinct_candidate(
+                candidate_index, history, history_state.index, Direction::Up)) {
+            history_state.index = *prev;
+        }
     }
 
     buffer.text = history[history_state.index];
@@ -179,8 +235,14 @@ bool browse_history_down(LineBuffer &buffer,
         return false;
     }
 
-    if (history_state.index + 1 < history.size()) {
-        ++history_state.index;
+    std::string prefix =
+        history_state.active ? history_state.draft : buffer.text;
+    std::vector<size_t> candidate_index =
+        get_history_candidates(history, prefix);
+
+    if (auto next = distinct_candidate(candidate_index, history,
+                                       history_state.index, Direction::Down)) {
+        history_state.index = *next;
         buffer.text = history[history_state.index];
     } else {
         reset_history_browse(history_state, history.size());

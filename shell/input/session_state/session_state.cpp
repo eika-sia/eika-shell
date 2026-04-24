@@ -195,12 +195,11 @@ bool apply_history_navigation(EditorSessionState &session,
                                                   session.history);
 }
 
-void begin_completion_selection(EditorSessionState &session,
-                                const editor_state::LineBuffer &buffer,
-                                size_t replace_begin, size_t replace_end,
-                                std::vector<std::string> candidates,
-                                std::vector<features::CompletionDisplayCandidate>
-                                    display_candidates) {
+void begin_completion_selection(
+    EditorSessionState &session, const editor_state::LineBuffer &buffer,
+    size_t replace_begin, size_t replace_end,
+    std::vector<std::string> candidates,
+    std::vector<features::CompletionDisplayCandidate> display_candidates) {
     session.completion = {};
 
     session.completion.active = true;
