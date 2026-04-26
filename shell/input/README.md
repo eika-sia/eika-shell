@@ -5,7 +5,7 @@
 - `completion_menu.cpp` renders and clears the completion candidate menu below the prompt
 - `key/` converts input bytes to semantic actions (like pasted text, escape sequences)
 - `editor_state/` mutates the line buffer and history browse state
-- `session_state/` handles per line stuff like a kill ring or active completion selection
+- `session_state/` handles per-line interaction state such as the kill ring, active completion selection, and undo/redo history
 
 ## High-Level Pipeline
 
@@ -25,7 +25,7 @@ key::read_event()
 input::read_command_line()
     |
     +-- editor_state: pure buffer/history mutations
-    +-- session_state: kill ring, yank-pop, history invalidation, completion selection
+    +-- session_state: kill ring, yank-pop, history invalidation, completion selection, undo/redo snapshots
     +-- completion: compute completion action
     +-- prompt: build redraw frames for the input block
     +-- below_prompt_panel: generic below-input panel frames
@@ -85,6 +85,7 @@ The main loop does this:
 - mapping key bindings to editor actions
 - paste normalization for a single-line editor
 - calling completion and deciding whether to replace text or open a completion-selection session
+- deciding whether undo/redo should act on history or cancel active completion preview first
 - deciding when prompt redraws should include menu show/update/dismiss work
 - deciding when input is finished
 
@@ -235,6 +236,9 @@ Current session state:
 - kill coalescing state
 - yank pop state
 - completion selection state
+- undo stack
+- redo stack
+- current undo-group kind
 
 ### Kill Ring Model
 
@@ -253,6 +257,41 @@ Behavior:
 - `Ctrl+Y` yanks the latest kill without consuming it
 - `Alt+Y` rotates through older ring entries, replacing the just-yanked text
 - ordinary edits/movement/history/completion reset kill chaining and usually invalidate yank-pop
+
+### Undo / Redo Model
+
+Undo state currently stores full line snapshots:
+- buffer text
+- cursor position
+
+Undo/redo lives in `session_state` rather than `editor_state` because restoring a line also has to clear or reset other per-line interaction state:
+- history browse mode
+- completion selection preview state
+- yank-pop validity
+- current undo-group boundaries
+
+Current grouping rules:
+- consecutive typed text inserts are one undo step
+- consecutive typed blank separators are one undo step
+- one paste is one undo step
+- consecutive backspaces are one undo step
+- consecutive deletes are one undo step
+- consecutive same-direction kills are one undo step
+- each yank is one undo step
+- each yank-pop is one undo step
+- each history navigation step is one undo step
+- direct range replacements are one undo step
+
+Current boundary rules:
+- movement closes the current undo group
+- `Esc`, `Enter`, `Ctrl+L`, and opening completion close the current undo group
+- undo/redo restore clears transient history/completion/yank state before restoring the target snapshot
+
+Current completion interaction rules:
+- preview cycling does not create undo history
+- `Esc` cancels preview and restores the anchor buffer without creating an undo step
+- accepting a preview creates one undo step back to the anchor buffer
+- if completion selection is active, `Ctrl+Z` and `Alt+Z` cancel the preview/menu first instead of immediately walking undo/redo history
 
 ### History Coupling
 
@@ -276,7 +315,8 @@ Behavior:
 - `Shift+Tab` reverses that rotation when the terminal reports it as a modified `Tab` event
 - `Esc` cancels and restores the anchor buffer
 - `Enter` accepts the currently previewed text but stays in the input editor
-- any ordinary edit or movement confirms the preview first, then continues with that command
+- ordinary edits, paste, erase, movement, and history navigation accept the preview first, then continue with that command
+- undo and redo are special: while completion selection is active they cancel the preview/menu first instead of touching snapshot history
 
 ## Completion in the Input Pipeline
 
@@ -321,13 +361,18 @@ The bindings are intentionally implemented in `input.cpp`, not in `key/`.
 ### Ctrl bindings
 
 - `Ctrl+A` -> home
+- `Ctrl+B` -> left
 - `Ctrl+D` -> delete at cursor, or EOF when buffer is empty
 - `Ctrl+E` -> end
+- `Ctrl+F` -> right
 - `Ctrl+K` -> kill to end of line
 - `Ctrl+L` -> clear screen and redraw full prompt
+- `Ctrl+N` -> history down
+- `Ctrl+P` -> history up
 - `Ctrl+U` -> kill to start of line
 - `Ctrl+W` -> kill previous word
 - `Ctrl+Y` -> yank latest kill
+- `Ctrl+Z` -> undo
 
 ### Alt bindings
 
@@ -336,6 +381,7 @@ The bindings are intentionally implemented in `input.cpp`, not in `key/`.
 - `Alt+F` -> word-right
 - `Alt+D` -> kill next word
 - `Alt+Y` -> yank-pop
+- `Alt+Z` -> redo
 
 ### Special keys
 
@@ -347,6 +393,9 @@ The bindings are intentionally implemented in `input.cpp`, not in `key/`.
 - `Tab` -> completion
 - `Shift+Tab` -> reverse completion cycling when completion selection is active
 - `Enter` -> finish line
+
+Current limitation:
+- literal `Ctrl+Shift+Z` redo is not available yet because the current control-byte decoder can represent `Ctrl+Z`, but not Shift on that same path
 
 ## Resize, Interrupt, and EOF Behavior
 

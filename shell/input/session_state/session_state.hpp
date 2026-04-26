@@ -36,10 +36,32 @@ struct CompletionSelectionState {
     size_t selected_index = 0;
 };
 
+struct BufferSnapshot {
+    std::string text;
+    size_t cursor = 0;
+};
+
+enum UndoGroupKind {
+    None,
+    InsertText,
+    InsertBlank,
+    Backspace,
+    Delete,
+    KillForward,
+    KillBackward
+};
+
+struct UndoState {
+    std::vector<BufferSnapshot> undo_stack;
+    std::vector<BufferSnapshot> redo_stack;
+    UndoGroupKind open_group = UndoGroupKind::None;
+};
+
 struct EditorSessionState {
     editor_state::HistoryBrowseState history;
     KillRingState kill_ring;
     CompletionSelectionState completion;
+    UndoState undo;
 };
 
 void initialize_editor_session(EditorSessionState &session,
@@ -47,8 +69,12 @@ void initialize_editor_session(EditorSessionState &session,
 void note_non_kill_command(EditorSessionState &session,
                            bool invalidate_yank = true);
 
-bool insert_text(EditorSessionState &session, editor_state::LineBuffer &buffer,
-                 size_t history_size, const std::string &text);
+bool insert_typed_text(EditorSessionState &session,
+                       editor_state::LineBuffer &buffer, size_t history_size,
+                       const std::string &text);
+bool insert_pasted_text(EditorSessionState &session,
+                        editor_state::LineBuffer &buffer, size_t history_size,
+                        const std::string &text);
 bool replace_range(EditorSessionState &session,
                    editor_state::LineBuffer &buffer, size_t history_size,
                    size_t replace_begin, size_t replace_end,
@@ -79,6 +105,13 @@ bool step_completion_selection(EditorSessionState &session,
 bool cancel_completion_selection(EditorSessionState &session,
                                  editor_state::LineBuffer &buffer,
                                  size_t history_size);
-void confirm_completion_selection(EditorSessionState &session);
+bool accept_completion_selection(EditorSessionState &session,
+                                 editor_state::LineBuffer &buffer,
+                                 size_t history_size);
+
+bool undo(EditorSessionState &session, editor_state::LineBuffer &,
+          size_t history_size);
+bool redo(EditorSessionState &session, editor_state::LineBuffer &,
+          size_t history_size);
 
 } // namespace shell::input::session_state

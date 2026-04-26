@@ -92,11 +92,92 @@ const std::string *rotate_yank(KillRingState &kill_ring) {
     return &entry;
 }
 
+void prepare_for_mutating_edit(EditorSessionState &session, size_t history_size,
+                               bool should_invalidate_yank = true) {
+    reset_kill_chain(session.kill_ring);
+    if (should_invalidate_yank) {
+        invalidate_yank(session.kill_ring);
+    }
+    prepare_for_buffer_edit(session, history_size);
+}
+
+BufferSnapshot capture_snapshot(const editor_state::LineBuffer &buffer) {
+    return BufferSnapshot{buffer.text, buffer.cursor > buffer.text.size()
+                                           ? buffer.text.size()
+                                           : buffer.cursor};
+}
+
+inline bool restore_snapshot(editor_state::LineBuffer &buffer,
+                             const BufferSnapshot &snapshot) {
+    return editor_state::restore_buffer(buffer, snapshot.text, snapshot.cursor);
+}
+
+inline bool same_snapshot(const BufferSnapshot &lhs,
+                          const BufferSnapshot &rhs) {
+    return lhs.cursor == rhs.cursor && lhs.text == rhs.text;
+}
+
+inline void invalidate_redo(UndoState &undo_state) {
+    undo_state.redo_stack.clear();
+}
+
+inline void close_undo_group(UndoState &undo_state) {
+    undo_state.open_group = UndoGroupKind::None;
+}
+
+void reset_transient_state_for_restore(EditorSessionState &session,
+                                       size_t history_size) {
+    if (session.history.active)
+        editor_state::reset_history_browse(session.history, history_size);
+
+    session.completion = {};
+
+    reset_kill_chain(session.kill_ring);
+
+    invalidate_yank(session.kill_ring);
+
+    close_undo_group(session.undo);
+}
+
+void record_successful_edit(EditorSessionState &session, BufferSnapshot before,
+                            UndoGroupKind group, bool keep_group_open) {
+    const bool continuing_group =
+        keep_group_open && session.undo.open_group == group;
+
+    if (!continuing_group) {
+        invalidate_redo(session.undo);
+        session.undo.undo_stack.push_back(before);
+    }
+
+    session.undo.open_group = keep_group_open ? group : UndoGroupKind::None;
+}
+
+bool completion_matches_anchor(const CompletionSelectionState &completion,
+                               const editor_state::LineBuffer &buffer) {
+    const size_t anchor_cursor =
+        completion.anchor_cursor > completion.anchor_text.size()
+            ? completion.anchor_text.size()
+            : completion.anchor_cursor;
+
+    return buffer.text == completion.anchor_text &&
+           buffer.cursor == anchor_cursor;
+}
+
+bool is_typed_group_separator(const std::string &text) {
+    return text.size() == 1 && (text[0] == ' ' || text[0] == '\t');
+}
+
+UndoGroupKind typed_insert_group_kind(const std::string &text) {
+    return is_typed_group_separator(text) ? UndoGroupKind::InsertBlank
+                                          : UndoGroupKind::InsertText;
+}
+
 } // namespace
 
 void initialize_editor_session(EditorSessionState &session,
                                size_t history_size) {
     session.history.index = history_size;
+    session.undo = {};
 }
 
 void note_non_kill_command(EditorSessionState &session,
@@ -105,13 +186,44 @@ void note_non_kill_command(EditorSessionState &session,
     if (should_invalidate_yank) {
         invalidate_yank(session.kill_ring);
     }
+
+    close_undo_group(session.undo);
 }
 
-bool insert_text(EditorSessionState &session, editor_state::LineBuffer &buffer,
-                 size_t history_size, const std::string &text) {
+bool insert_typed_text(EditorSessionState &session,
+                       editor_state::LineBuffer &buffer, size_t history_size,
+                       const std::string &text) {
+    if (text.empty())
+        return false;
+
+    BufferSnapshot before = capture_snapshot(buffer);
+    prepare_for_mutating_edit(session, history_size);
+    bool changed = editor_state::insert_text(buffer, text);
+
+    if (!changed)
+        return false;
+
+    record_successful_edit(session, before, typed_insert_group_kind(text),
+                           true);
+    return true;
+}
+
+bool insert_pasted_text(EditorSessionState &session,
+                        editor_state::LineBuffer &buffer, size_t history_size,
+                        const std::string &text) {
+    if (text.empty())
+        return false;
+
     note_non_kill_command(session);
-    prepare_for_buffer_edit(session, history_size);
-    return editor_state::insert_text(buffer, text);
+    BufferSnapshot before = capture_snapshot(buffer);
+    prepare_for_mutating_edit(session, history_size);
+    bool changed = editor_state::insert_text(buffer, text);
+
+    if (!changed)
+        return false;
+
+    record_successful_edit(session, before, UndoGroupKind::InsertText, false);
+    return true;
 }
 
 bool replace_range(EditorSessionState &session,
@@ -119,28 +231,52 @@ bool replace_range(EditorSessionState &session,
                    size_t replace_begin, size_t replace_end,
                    const std::string &replacement) {
     note_non_kill_command(session);
-    prepare_for_buffer_edit(session, history_size);
-    return editor_state::replace_range(buffer, replace_begin, replace_end,
-                                       replacement);
+    BufferSnapshot before = capture_snapshot(buffer);
+    prepare_for_mutating_edit(session, history_size);
+    bool changed = editor_state::replace_range(buffer, replace_begin,
+                                               replace_end, replacement);
+
+    if (!changed)
+        return false;
+
+    record_successful_edit(session, before, UndoGroupKind::None, false);
+    return true;
 }
 
 bool apply_erase(EditorSessionState &session, editor_state::LineBuffer &buffer,
                  size_t history_size, editor_state::Erase erase_action) {
-    note_non_kill_command(session);
-    prepare_for_buffer_edit(session, history_size);
-    return editor_state::apply_erase(buffer, erase_action);
+    BufferSnapshot before = capture_snapshot(buffer);
+    prepare_for_mutating_edit(session, history_size);
+    UndoGroupKind chosen_group =
+        erase_action == editor_state::Erase::BeforeCursor
+            ? UndoGroupKind::Backspace
+            : UndoGroupKind::Delete;
+    bool changed = editor_state::apply_erase(buffer, erase_action);
+
+    if (!changed)
+        return false;
+
+    record_successful_edit(session, before, chosen_group, true);
+    return true;
 }
 
 editor_state::KillResult apply_kill(EditorSessionState &session,
                                     editor_state::LineBuffer &buffer,
                                     size_t history_size,
                                     editor_state::Kill kill_action) {
+    BufferSnapshot before = capture_snapshot(buffer);
     prepare_for_buffer_edit(session, history_size);
 
     const editor_state::KillResult result =
         editor_state::apply_kill(buffer, kill_action);
     if (result.changed) {
         record_kill(session.kill_ring, result.killed_text, result.direction);
+        UndoGroupKind chosen_group =
+            kill_action == editor_state::Kill::ToLineStart ||
+                    kill_action == editor_state::Kill::WordLeft
+                ? UndoGroupKind::KillBackward
+                : UndoGroupKind::KillForward;
+        record_successful_edit(session, before, chosen_group, true);
     }
 
     return result;
@@ -148,6 +284,7 @@ editor_state::KillResult apply_kill(EditorSessionState &session,
 
 bool yank_latest(EditorSessionState &session, editor_state::LineBuffer &buffer,
                  size_t history_size) {
+    BufferSnapshot before = capture_snapshot(buffer);
     reset_kill_chain(session.kill_ring);
 
     const size_t replace_begin = buffer.cursor;
@@ -162,11 +299,13 @@ bool yank_latest(EditorSessionState &session, editor_state::LineBuffer &buffer,
         return false;
     }
 
+    record_successful_edit(session, before, UndoGroupKind::None, false);
     return true;
 }
 
 bool yank_pop(EditorSessionState &session, editor_state::LineBuffer &buffer,
               size_t history_size) {
+    BufferSnapshot before = capture_snapshot(buffer);
     reset_kill_chain(session.kill_ring);
 
     const size_t replace_begin = session.kill_ring.yank.replace_begin;
@@ -183,6 +322,7 @@ bool yank_pop(EditorSessionState &session, editor_state::LineBuffer &buffer,
         return false;
     }
 
+    record_successful_edit(session, before, UndoGroupKind::None, false);
     return true;
 }
 
@@ -190,9 +330,15 @@ bool apply_history_navigation(EditorSessionState &session,
                               editor_state::LineBuffer &buffer,
                               editor_state::HistoryNavigation navigation,
                               const std::vector<std::string> &history) {
+    BufferSnapshot before = capture_snapshot(buffer);
     note_non_kill_command(session);
-    return editor_state::apply_history_navigation(buffer, navigation, history,
-                                                  session.history);
+    bool changed = editor_state::apply_history_navigation(
+        buffer, navigation, history, session.history);
+    if (!changed)
+        return false;
+
+    record_successful_edit(session, before, UndoGroupKind::None, false);
+    return true;
 }
 
 void begin_completion_selection(
@@ -268,8 +414,63 @@ bool cancel_completion_selection(EditorSessionState &session,
     return false;
 }
 
-void confirm_completion_selection(EditorSessionState &session) {
+bool accept_completion_selection(EditorSessionState &session,
+                                 editor_state::LineBuffer &buffer,
+                                 size_t history_size) {
+    if (!session.completion.active) {
+        return false;
+    }
+
+    close_undo_group(session.undo);
+
+    if (!session.completion.preview_active ||
+        completion_matches_anchor(session.completion, buffer)) {
+        session.completion = {};
+        return false;
+    }
+
+    reset_kill_chain(session.kill_ring);
+    invalidate_yank(session.kill_ring);
+    if (session.history.active) {
+        editor_state::reset_history_browse(session.history, history_size);
+    }
+
+    invalidate_redo(session.undo);
+    session.undo.undo_stack.push_back(BufferSnapshot{
+        session.completion.anchor_text, session.completion.anchor_cursor});
+
     session.completion = {};
+    return true;
+}
+
+bool undo(EditorSessionState &session, editor_state::LineBuffer &buffer,
+          size_t history_size) {
+    if (session.undo.undo_stack.empty())
+        return false;
+
+    BufferSnapshot current = capture_snapshot(buffer);
+    BufferSnapshot target = session.undo.undo_stack.back();
+    session.undo.undo_stack.pop_back();
+    session.undo.redo_stack.push_back(current);
+
+    reset_transient_state_for_restore(session, history_size);
+
+    return restore_snapshot(buffer, target);
+}
+
+bool redo(EditorSessionState &session, editor_state::LineBuffer &buffer,
+          size_t history_size) {
+    if (session.undo.redo_stack.empty())
+        return false;
+
+    BufferSnapshot current = capture_snapshot(buffer);
+    BufferSnapshot target = session.undo.redo_stack.back();
+    session.undo.redo_stack.pop_back();
+    session.undo.undo_stack.push_back(current);
+
+    reset_transient_state_for_restore(session, history_size);
+
+    return restore_snapshot(buffer, target);
 }
 
 } // namespace shell::input::session_state

@@ -269,10 +269,16 @@ void replace_range_and_redraw(InputContext &context, size_t replace_begin,
                           replace_begin, replace_end, replacement));
 }
 
-void insert_input_text(InputContext &context, const std::string &text) {
-    redraw_if_changed(
-        context, session_state::insert_text(context.session, context.buffer,
-                                            context.history_size, text));
+void insert_typed_input_text(InputContext &context, const std::string &text) {
+    redraw_if_changed(context, session_state::insert_typed_text(
+                                   context.session, context.buffer,
+                                   context.history_size, text));
+}
+
+void insert_pasted_input_text(InputContext &context, const std::string &text) {
+    redraw_if_changed(context, session_state::insert_pasted_text(
+                                   context.session, context.buffer,
+                                   context.history_size, text));
 }
 
 void handle_completion_selection_escape(InputContext &context) {
@@ -288,6 +294,32 @@ void handle_completion_selection_escape(InputContext &context) {
 
 bool is_reverse_cycle_tab_event(const key::InputEvent &event) {
     return key::has_modifier(event, key::KeyModShift);
+}
+
+bool is_undo_event(const key::InputEvent &event) {
+    return event.kind == key::InputEventKind::Key &&
+           event.key == key::EditorKey::Character &&
+           event.key_character == 'z' &&
+           event.modifiers == static_cast<unsigned>(key::KeyModCtrl);
+}
+
+void undo_and_redraw(InputContext &context) {
+    redraw_if_changed(context,
+                      session_state::undo(context.session, context.buffer,
+                                          context.history_size));
+}
+
+bool is_redo_event(const key::InputEvent &event) {
+    return event.kind == key::InputEventKind::Key &&
+           event.key == key::EditorKey::Character &&
+           event.key_character == 'z' &&
+           event.modifiers == static_cast<unsigned>(key::KeyModAlt);
+}
+
+void redo_and_redraw(InputContext &context) {
+    redraw_if_changed(context,
+                      session_state::redo(context.session, context.buffer,
+                                          context.history_size));
 }
 
 void handle_tab_completion(InputContext &context, bool reverse = false) {
@@ -388,6 +420,9 @@ KeyHandlingResult handle_character_key(InputContext &context,
             apply_history_navigation_and_redraw(
                 context, editor_state::HistoryNavigation::Down);
             return KeyHandlingResult::ContinueLoop;
+        case 'z':
+            undo_and_redraw(context);
+            return KeyHandlingResult::ContinueLoop;
         default:
             break;
         }
@@ -410,6 +445,9 @@ KeyHandlingResult handle_character_key(InputContext &context,
             return KeyHandlingResult::ContinueLoop;
         case 'y':
             yank_pop_and_redraw(context);
+            return KeyHandlingResult::ContinueLoop;
+        case 'z':
+            redo_and_redraw(context);
             return KeyHandlingResult::ContinueLoop;
         default:
             break;
@@ -568,9 +606,20 @@ InputResult read_command_line(shell::ShellState &state,
                 continue;
             }
 
+            if (is_undo_event(event)) {
+                handle_completion_selection_escape(context);
+                continue;
+            }
+
+            if (is_redo_event(event)) {
+                handle_completion_selection_escape(context);
+                continue;
+            }
+
             if (event.kind == key::InputEventKind::Key &&
                 event.key == key::EditorKey::Enter) {
-                session_state::confirm_completion_selection(context.session);
+                session_state::accept_completion_selection(session, buffer,
+                                                           history_size);
                 dismiss_completion_menu(context);
                 continue;
             }
@@ -579,17 +628,18 @@ InputResult read_command_line(shell::ShellState &state,
                 !(event.kind == key::InputEventKind::Key &&
                   event.key == key::EditorKey::Tab) &&
                 event.kind != key::InputEventKind::Resized) {
-                session_state::confirm_completion_selection(context.session);
+                session_state::accept_completion_selection(session, buffer,
+                                                           history_size);
             }
         }
 
         switch (event.kind) {
         case key::InputEventKind::TextInput:
-            insert_input_text(context, event.text);
+            insert_typed_input_text(context, event.text);
             continue;
         case key::InputEventKind::Paste:
-            insert_input_text(context,
-                              normalize_paste_for_single_line(event.text));
+            insert_pasted_input_text(
+                context, normalize_paste_for_single_line(event.text));
             continue;
         case key::InputEventKind::Key: {
             KeyHandlingResult key_result = handle_character_key(context, event);
