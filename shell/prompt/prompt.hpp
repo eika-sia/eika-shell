@@ -8,10 +8,15 @@ struct ShellState;
 
 namespace shell::prompt {
 
-struct InputRenderState {
+struct PromptLayout {
     std::string header_rendered;
     size_t header_display_width = 0;
+    std::string input_prefix_rendered;
     size_t prompt_prefix_display_width = 0;
+};
+
+struct InputRenderState {
+    PromptLayout layout;
     size_t input_display_width = 0;
     size_t cursor_display_width = 0;
     size_t terminal_columns = 80;
@@ -25,10 +30,11 @@ struct InputFrame {
 
 std::string build_prompt(const shell::ShellState &state,
                          InputRenderState &render_state);
-InputFrame build_redraw_input_frame(const InputRenderState &current_render_state,
-                                    const shell::ShellState &state,
-                                    const std::string &line, size_t cursor,
-                                    bool full_prompt);
+InputFrame
+build_redraw_input_frame(const InputRenderState &current_render_state,
+                         const shell::ShellState &state,
+                         const std::string &line, size_t cursor,
+                         bool full_prompt);
 void redraw_input_line(InputRenderState &render_state,
                        const shell::ShellState &state, const std::string &line,
                        size_t cursor, bool full_prompt);

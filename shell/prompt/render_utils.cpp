@@ -20,6 +20,33 @@ winsize get_terminal_size() {
     return ws;
 }
 
+size_t measure_rendered_block_rows(const std::string &text, size_t columns) {
+    if (text.empty()) {
+        return 0;
+    }
+
+    size_t rows = 0;
+    size_t line_start = 0;
+    while (line_start <= text.size()) {
+        const size_t line_end = text.find('\n', line_start);
+        const size_t segment_end =
+            line_end == std::string::npos ? text.size() : line_end;
+        rows +=
+            compute_rendered_rows(0,
+                                  measure_display_width(text.substr(
+                                      line_start, segment_end - line_start)),
+                                  columns);
+
+        if (line_end == std::string::npos) {
+            break;
+        }
+
+        line_start = line_end + 1;
+    }
+
+    return rows;
+}
+
 } // namespace
 
 size_t get_terminal_columns() {
@@ -57,6 +84,11 @@ size_t measure_display_width(const std::string &text) {
                     ++i;
                 }
             }
+            continue;
+        }
+
+        if (c == '\n' || c == '\r') {
+            ++i;
             continue;
         }
 
@@ -115,14 +147,14 @@ RenderMetrics measure_render_state(const InputRenderState &render_state,
         render_state.cursor_display_width == render_state.input_display_width;
 
     RenderMetrics metrics;
-    metrics.header_rows =
-        compute_rendered_rows(0, render_state.header_display_width, columns);
+    metrics.header_rows = measure_rendered_block_rows(
+        render_state.layout.header_rendered, columns);
     metrics.input_rows =
-        compute_rendered_rows(render_state.prompt_prefix_display_width,
+        compute_rendered_rows(render_state.layout.prompt_prefix_display_width,
                               render_state.input_display_width, columns);
     metrics.total_rows = metrics.header_rows + metrics.input_rows;
     metrics.cursor_row =
-        compute_cursor_geometry(render_state.prompt_prefix_display_width,
+        compute_cursor_geometry(render_state.layout.prompt_prefix_display_width,
                                 render_state.cursor_display_width, columns,
                                 cursor_at_line_end)
             .row;

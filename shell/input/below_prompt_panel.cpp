@@ -13,7 +13,7 @@ input_cursor_geometry(const prompt::InputRenderState &render_state,
         render_state.cursor_display_width == render_state.input_display_width;
 
     return prompt::render_utils::compute_cursor_geometry(
-        render_state.prompt_prefix_display_width,
+        render_state.layout.prompt_prefix_display_width,
         render_state.cursor_display_width, columns, cursor_at_line_end);
 }
 
@@ -21,13 +21,12 @@ prompt::render_utils::CursorGeometry
 input_end_geometry(const prompt::InputRenderState &render_state,
                    size_t columns) {
     return prompt::render_utils::compute_cursor_geometry(
-        render_state.prompt_prefix_display_width,
+        render_state.layout.prompt_prefix_display_width,
         render_state.input_display_width, columns, true);
 }
 
 std::string restore_input_cursor(const prompt::InputRenderState &render_state,
-                                 size_t columns,
-                                 size_t rows_below_input_end) {
+                                 size_t columns, size_t rows_below_input_end) {
     const prompt::render_utils::CursorGeometry cursor =
         input_cursor_geometry(render_state, columns);
     const prompt::render_utils::CursorGeometry end =
@@ -48,8 +47,9 @@ std::string restore_input_cursor(const prompt::InputRenderState &render_state,
     return frame;
 }
 
-std::string move_from_cursor_to_input_end(
-    const prompt::InputRenderState &render_state, size_t columns) {
+std::string
+move_from_cursor_to_input_end(const prompt::InputRenderState &render_state,
+                              size_t columns) {
     const size_t cursor_row =
         prompt::render_utils::measure_render_state(render_state, columns)
             .cursor_row;
@@ -66,8 +66,9 @@ std::string move_from_cursor_to_input_end(
     return frame;
 }
 
-std::string move_from_cursor_to_panel_start(
-    const prompt::InputRenderState &render_state, size_t columns) {
+std::string
+move_from_cursor_to_panel_start(const prompt::InputRenderState &render_state,
+                                size_t columns) {
     std::string frame = move_from_cursor_to_input_end(render_state, columns);
     frame += "\033[1B\r";
     return frame;

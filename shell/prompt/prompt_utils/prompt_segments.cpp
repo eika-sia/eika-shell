@@ -1,6 +1,4 @@
-#include "prompt_header.hpp"
-
-#include "../render_utils.hpp"
+#include "prompt_segments.hpp"
 
 #include <cerrno>
 #include <fcntl.h>
@@ -15,17 +13,15 @@
 #include "../../../builtins/env/env.hpp"
 #include "../../shell.hpp"
 
-namespace shell::prompt::prompt_header {
+namespace shell::prompt::prompt_segments {
 namespace {
 
-const std::string purple = "\033[1;35m";
-const std::string cyan_bold = "\033[1;36m";
-const std::string cyan = "\033[0;36m";
-const std::string green = "\033[0;32m";
-const std::string yellow = "\033[0;33m";
-const std::string blue = "\033[0;34m";
-const std::string bold_red = "\033[1;31m";
-const std::string reset = "\033[0m";
+std::string sgr(const char *code) { return std::string("\033[") + code + "m"; }
+
+struct StyleToken {
+    const char *name;
+    const char *code;
+};
 
 struct GitPromptInfo {
     bool in_repo = false;
@@ -56,6 +52,37 @@ std::string get_current_working_directory() {
     }
 
     return cwd;
+}
+
+std::string get_display_user(const shell::ShellState &state) {
+    const std::string user = builtins::env::get_variable_value(state, "USER");
+    return user.empty() ? "shell" : user;
+}
+
+std::string get_display_directory(const shell::ShellState &state) {
+    std::string path = get_current_working_directory();
+    if (path.empty()) {
+        return path;
+    }
+
+    const shell::ShellVariable *home =
+        builtins::env::find_variable(state, "HOME");
+    if (home != nullptr && !home->value.empty() &&
+        path.compare(0, home->value.size(), home->value) == 0) {
+        path = "~" + path.substr(home->value.size());
+    }
+
+    return path;
+}
+
+std::string get_hostname_text() {
+    char hostname[256];
+    if (gethostname(hostname, sizeof(hostname)) == -1) {
+        return "";
+    }
+
+    hostname[sizeof(hostname) - 1] = '\0';
+    return hostname;
 }
 
 std::optional<std::string>
@@ -129,8 +156,8 @@ capture_command_output(const std::vector<std::string> &argv) {
 void parse_ahead_behind(std::string text, GitPromptInfo &info) {
     size_t start = 0;
     while (start < text.size()) {
-        size_t comma = text.find(',', start);
-        std::string part = trim_whitespace(
+        const size_t comma = text.find(',', start);
+        const std::string part = trim_whitespace(
             text.substr(start, comma == std::string::npos ? std::string::npos
                                                           : comma - start));
 
@@ -250,29 +277,12 @@ GitPromptInfo query_git_prompt_info(const shell::ShellState &) {
 }
 
 std::string build_location_segment(const shell::ShellState &state) {
-    std::string res = "";
-
-    const std::string cwd = get_current_working_directory();
-    if (!cwd.empty()) {
-        std::string path = cwd;
-
-        const shell::ShellVariable *home =
-            builtins::env::find_variable(state, "HOME");
-        const std::string user =
-            builtins::env::get_variable_value(state, "USER");
-        const std::string display_user = user.empty() ? "shell" : user;
-
-        if (home != nullptr && !home->value.empty()) {
-            std::string h(home->value);
-            if (path.compare(0, h.size(), h) == 0) {
-                path = "~" + path.substr(h.size());
-            }
-        }
-
-        res = purple + display_user + cyan_bold + " → " + path + reset;
+    const std::string path = get_display_directory(state);
+    if (path.empty()) {
+        return "";
     }
 
-    return res;
+    return get_display_user(state) + " → " + path;
 }
 
 std::string signal_label_from_status(int status) {
@@ -291,26 +301,24 @@ std::string signal_label_from_status(int status) {
 }
 
 std::string build_status_segment(const shell::ShellState &state) {
-    int status = state.last_status;
+    const int status = state.last_status;
     if (status == 0) {
         return "";
     }
 
-    return bold_red + "✘ " +
-           (status >= 128 ? signal_label_from_status(status - 128)
-                          : std::to_string(status)) +
-           reset;
+    return "✘ " + (status >= 128 ? signal_label_from_status(status - 128)
+                                 : std::to_string(status));
 }
 
 std::string build_background_segment(const shell::ShellState &state) {
     int count = 0;
-
     for (const process::ProcessInfo &proc : state.processes) {
-        if (proc.running && proc.background)
-            count++;
+        if (proc.running && proc.background) {
+            ++count;
+        }
     }
 
-    return count == 0 ? "" : cyan + "| bg: " + std::to_string(count) + reset;
+    return count == 0 ? "" : "| bg: " + std::to_string(count);
 }
 
 std::string build_git_segment(const shell::ShellState &state) {
@@ -319,49 +327,151 @@ std::string build_git_segment(const shell::ShellState &state) {
         return "";
     }
 
-    std::string segment = green + "on   " + info.ref_name + reset;
+    std::string segment = "on 󰊢 " + info.ref_name;
     if (info.ahead > 0) {
-        segment += " " + cyan + "↑" + std::to_string(info.ahead) + reset;
+        segment += " ↑" + std::to_string(info.ahead);
     }
     if (info.behind > 0) {
-        segment += " " + cyan + "↓" + std::to_string(info.behind) + reset;
+        segment += " ↓" + std::to_string(info.behind);
     }
     if (info.staged > 0) {
-        segment += " " + green + "+" + std::to_string(info.staged) + reset;
+        segment += " +" + std::to_string(info.staged);
     }
     if (info.unstaged > 0) {
-        segment += " " + yellow + "~" + std::to_string(info.unstaged) + reset;
+        segment += " ~" + std::to_string(info.unstaged);
     }
     if (info.untracked > 0) {
-        segment += " " + blue + "?" + std::to_string(info.untracked) + reset;
+        segment += " ?" + std::to_string(info.untracked);
     }
     if (info.conflicted > 0) {
-        segment +=
-            " " + bold_red + "!" + std::to_string(info.conflicted) + reset;
+        segment += " !" + std::to_string(info.conflicted);
     }
 
     return segment;
 }
 
+std::optional<std::string> render_style_token(const std::string &token) {
+    static const StyleToken style_tokens[] = {
+        {"reset", "0"},
+        {"fg_reset", "39"},
+        {"bg_reset", "49"},
+        {"bold", "1"},
+        {"dim", "2"},
+        {"underline", "4"},
+        {"black", "30"},
+        {"red", "31"},
+        {"green", "32"},
+        {"yellow", "33"},
+        {"blue", "38;5;24"},
+        {"magenta", "35"},
+        {"purple", "35"},
+        {"cyan", "36"},
+        {"white", "97"},
+        {"bright_black", "90"},
+        {"bright_red", "91"},
+        {"bright_green", "92"},
+        {"bright_yellow", "93"},
+        {"bright_blue", "94"},
+        {"bright_magenta", "95"},
+        {"bright_purple", "95"},
+        {"bright_cyan", "96"},
+        {"bright_white", "97"},
+        {"bg_black", "40"},
+        {"bg_red", "41"},
+        {"bg_green", "42"},
+        {"bg_yellow", "43"},
+        {"bg_blue", "48;5;24"},
+        {"bg_magenta", "45"},
+        {"bg_purple", "45"},
+        {"bg_cyan", "46"},
+        {"bg_white", "107"},
+        {"bg_bright_black", "100"},
+        {"bg_bright_red", "101"},
+        {"bg_bright_green", "102"},
+        {"bg_bright_yellow", "103"},
+        {"bg_bright_blue", "104"},
+        {"bg_bright_magenta", "105"},
+        {"bg_bright_purple", "105"},
+        {"bg_bright_cyan", "106"},
+        {"bg_bright_white", "107"},
+        {"bold_black", "1;30"},
+        {"bold_red", "1;31"},
+        {"bold_green", "1;32"},
+        {"bold_yellow", "1;33"},
+        {"bold_blue", "1;38;5;24"},
+        {"bold_magenta", "1;35"},
+        {"bold_purple", "1;35"},
+        {"bold_cyan", "1;36"},
+        {"bold_white", "1;97"},
+    };
+
+    for (const StyleToken &style : style_tokens) {
+        if (token == style.name) {
+            return sgr(style.code);
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<std::string> render_named_token(const shell::ShellState &state,
+                                              const std::string &token) {
+    if (const std::optional<std::string> style = render_style_token(token);
+        style.has_value()) {
+        return style;
+    }
+
+    if (token == "n") {
+        return std::string("\n");
+    }
+    if (token == "arrow" || token == "prompt") {
+        return std::string("╰─❯ ");
+    }
+    if (token == "powerline_right" || token == "pl_right") {
+        return std::string("");
+    }
+    if (token == "powerline_left" || token == "pl_left") {
+        return std::string("");
+    }
+    if (token == "powerline_thin_right" || token == "pl_right_thin") {
+        return std::string("");
+    }
+    if (token == "powerline_thin_left" || token == "pl_left_thin") {
+        return std::string("");
+    }
+    if (token == "user") {
+        return get_display_user(state);
+    }
+    if (token == "host" || token == "hostname") {
+        return get_hostname_text();
+    }
+    if (token == "dir") {
+        return get_display_directory(state);
+    }
+    if (token == "cwd") {
+        return get_current_working_directory();
+    }
+    if (token == "location") {
+        return build_location_segment(state);
+    }
+    if (token == "status") {
+        return build_status_segment(state);
+    }
+    if (token == "git") {
+        return build_git_segment(state);
+    }
+    if (token == "bg") {
+        return build_background_segment(state);
+    }
+
+    return std::nullopt;
+}
+
 } // namespace
 
-HeaderInfo build_header(const shell::ShellState &state) {
-    std::string res = purple + "╭─" + reset;
-
-    std::string loc = build_location_segment(state);
-    std::string status = build_status_segment(state);
-    std::string git = build_git_segment(state);
-    std::string bg = build_background_segment(state);
-
-    if (!loc.empty())
-        res += " " + loc;
-    if (!status.empty())
-        res += " " + status;
-    if (!git.empty())
-        res += " " + git;
-    if (!bg.empty())
-        res += " " + bg;
-
-    return HeaderInfo{res, render_utils::measure_display_width(res)};
+std::optional<std::string> render_token(const shell::ShellState &state,
+                                        const std::string &token) {
+    return render_named_token(state, token);
 }
-} // namespace shell::prompt::prompt_header
+
+} // namespace shell::prompt::prompt_segments
