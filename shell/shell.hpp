@@ -1,7 +1,7 @@
 #pragma once
 
-#include <string>
 #include <istream>
+#include <string>
 #include <sys/types.h>
 #include <termios.h>
 #include <unordered_map>
@@ -27,6 +27,7 @@ struct ShellState {
     bool interactive = false;
     bool running = true;
     int last_status = 0;
+    long long last_exec_seconds = 0;
 
     std::unordered_map<std::string, std::string> alias;
     std::unordered_map<std::string, ShellVariable> variables;

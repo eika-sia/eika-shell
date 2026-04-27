@@ -2,7 +2,7 @@
 
 The prompt stack is responsible for two separate jobs:
 
-- building the rendered prompt text from the shell state and the `PROMPT` template
+- building the rendered prompt text from the shell state and the `PROMPT` / `RPROMPT` templates
 - integrating that prompt layout with the interactive input redraw geometry
 
 The code is split so prompt syntax and prompt data live outside the redraw loop:
@@ -48,12 +48,14 @@ prompt.cpp
 It stores:
 - `header_rendered`
   Everything above the editable prompt line.
-- `header_display_width`
-  Display width of the widest header line.
 - `input_prefix_rendered`
   The actual editable prompt prefix shown on the last prompt line.
 - `prompt_prefix_display_width`
   Display width of that editable prompt prefix.
+- `input_right_rendered`
+  The optional right prompt rendered on the editable input row.
+- `input_right_display_width`
+  Display width of that right prompt.
 
 This split matters because the line editor only edits the last line. Completion menus and redraw clear logic need to know how many rows are above the editable line and how wide the prompt prefix is.
 
@@ -83,13 +85,18 @@ The prompt layer does not write directly to the terminal except through its publ
 
 ## `PROMPT`
 
-The prompt is configured through one shell variable:
+The prompt is configured through these shell variables:
 - `PROMPT`
+- `RPROMPT`
 
 If `PROMPT` is:
 - unset: the shell uses the built-in default template
 - set to an empty string: the shell also uses the built-in default template
 - set to a non-empty string: that string is parsed as the prompt template
+
+If `RPROMPT` is:
+- unset or empty: no right prompt is shown
+- set to a non-empty string: that string is parsed as the right prompt template
 
 The built-in default template is a multiline template that renders:
 - one header line
@@ -114,6 +121,11 @@ This renders as:
 <line 2 header>
 <line 3 editable prompt prefix>
 ```
+
+The right prompt is always single-line from the renderer's point of view:
+- the template is rendered normally
+- only the last rendered line is used on the editable prompt row
+- if it does not fit beside the current input text, it is hidden for that redraw
 
 ## Token Syntax
 
@@ -142,6 +154,20 @@ Prompt tokens like `%status`, `%git`, and `%bg` can expand to an empty string.
 
 The template renderer tries to avoid ugly doubled spaces when an empty token sits between visible segments. The rule is that if an empty token is surrounded by blank separators, the renderer collapses that gap to a single visible blank. This also works when style tokens such as `%{green}` or `%{reset}` sit around the empty token. Style tokens are zero-width and do not break blank-gap collapse.
 
+If a prompt line uses `pl_right_auto`, that line is rendered as a powerline segment chain instead of simple token concatenation:
+- each `pl_right_auto` ends the current segment
+- the separator color is derived from the current segment background and the next non-empty segment background
+- empty segments are dropped before transitions are rendered
+- if the last `pl_right_auto` is followed only by blanks or empty tokens, the last visible segment closes back into the terminal default background
+
+If a prompt line uses `pl_left_auto`, that line is rendered as a left-facing powerline chain:
+- each `pl_left_auto` starts the next visible segment
+- the separator color is derived from the previous visible background and the new segment background
+- empty segments are dropped before transitions are rendered
+- this is mainly useful for right prompts, where segments are visually anchored from the terminal edge inward
+
+Prompt lines also get an automatic final reset before trailing prompt blanks so a final space does not keep the previous segment background.
+
 ## Data Tokens
 
 These tokens produce prompt content, not ANSI styling:
@@ -151,6 +177,8 @@ These tokens produce prompt content, not ANSI styling:
 - `hostname`
 - `dir`
   Display current working directory. Replaces the home prefix with `~` when possible.
+- `curr_time`
+  Current local wall-clock time in `HH:MM` format. This updates when the prompt layout is rebuilt, not as a live ticking clock.
 - `cwd`
   Raw current working directory without `~` shortening.
 - `location`
@@ -161,15 +189,23 @@ These tokens produce prompt content, not ANSI styling:
   Current git segment text. Empty outside a repository.
 - `bg`
   Background job counter text like `| bg: 2`. Empty when there are no running background jobs.
+- `exec_time`
+  Duration of the last executed command line, formatted as whole seconds like `0s`, `3s`, or `57s`.
 - `arrow`
 - `prompt`
   The prompt arrow text: `╰─❯ `
 - `powerline_right`
 - `pl_right`
   Powerline right separator: ``
+- `powerline_right_auto`
+- `pl_right_auto`
+  Powerline right auto-separator. Ends the current segment and derives the separator colors from the surrounding segment backgrounds.
 - `powerline_left`
 - `pl_left`
   Powerline left separator: ``
+- `powerline_left_auto`
+- `pl_left_auto`
+  Powerline left auto-separator. Starts the next segment and derives the separator colors from the surrounding segment backgrounds.
 - `powerline_thin_right`
 - `pl_right_thin`
   Thin right separator: ``
@@ -192,6 +228,8 @@ General style tokens:
 
 Foreground colors:
 - `black`
+- `orange`
+  Uses 256-color orange (`38;5;208`).
 - `red`
 - `green`
 - `yellow`
@@ -216,6 +254,7 @@ Bright foreground colors:
 
 Bold foreground colors:
 - `bold_black`
+- `bold_orange`
 - `bold_red`
 - `bold_green`
 - `bold_yellow`
@@ -227,6 +266,8 @@ Bold foreground colors:
 
 Background colors:
 - `bg_black`
+- `bg_orange`
+  Uses 256-color orange background (`48;5;208`).
 - `bg_red`
 - `bg_green`
 - `bg_yellow`
@@ -292,7 +333,27 @@ The important trick is:
 - its background color should match the next segment background
 - for the final separator, `%{bg_reset}` clears the filled background so the arrow points into the terminal default background
 
-That is how you get the p10k-style “filled arrow” transition between blocks.
+If you want the prompt renderer to infer those transition colors and collapse empty segments cleanly, use `pl_right_auto` instead:
+
+```sh
+PROMPT='%{bg_blue}%{white} %dir %{pl_right_auto}%{bg_green}%{black} %git %{pl_right_auto} '
+```
+
+With that form:
+- the `dir` segment closes into the `git` segment automatically when `%git` is present
+- outside a git repository, the empty git segment is removed and the `dir` segment closes directly into the default background
+- the final prompt space is automatically reset back to terminal defaults
+
+For right prompts, the equivalent pattern uses `pl_left_auto`:
+
+```sh
+RPROMPT='%{pl_left_auto}%{bg_red}%{white} %status %{pl_left_auto}%{bg_blue}%{white} hi '
+```
+
+With that form:
+- an empty `%status` segment is dropped cleanly
+- the remaining visible segment still gets the correct default-to-blue left wedge
+- when `%status` is non-empty, the chain renders as `default -> red -> blue` using left-facing separators
 
 ### Literal Percent Sign
 
@@ -354,6 +415,5 @@ Implementation home:
 - Prompt tokens are simple text expansions. There are no conditionals yet.
 - Tokens that probe git still do subprocess work on each full prompt rebuild.
 - Literal shell escape syntaxes like `\033` are not interpreted by the prompt template engine.
-- Right prompt is not implemented yet. `PromptLayout` currently models only:
-  - header block
-  - editable prompt prefix
+- The right prompt is intentionally single-line and hide-on-overlap. It is not a multiline right-side layout system.
+- Auto powerline rendering is line-local. Mixing `pl_left_auto` and `pl_right_auto` on the same rendered line is not a supported layout mode.

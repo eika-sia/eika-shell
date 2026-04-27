@@ -5,7 +5,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <utility>
 
 namespace shell::prompt::render_utils {
 
@@ -99,11 +98,6 @@ size_t measure_display_width(const std::string &text) {
     }
 
     return width;
-}
-
-RenderedFragment make_rendered_fragment(std::string rendered) {
-    const size_t display_width = measure_display_width(rendered);
-    return RenderedFragment{std::move(rendered), display_width};
 }
 
 CursorGeometry compute_render_end_geometry(size_t base_column,

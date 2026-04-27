@@ -1,5 +1,6 @@
 #include "shell.hpp"
 
+#include <chrono>
 #include <iostream>
 #include <string>
 #include <unistd.h>
@@ -16,6 +17,15 @@
 
 namespace shell {
 namespace {
+
+using ExecutionClock = std::chrono::steady_clock;
+
+void update_last_exec_seconds(ShellState &state,
+                              ExecutionClock::time_point started_at) {
+    state.last_exec_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                                  ExecutionClock::now() - started_at)
+                                  .count();
+}
 
 bool is_assignment_only_command(const parser::Command &cmd) {
     return cmd.args.empty() && !cmd.assignments.empty();
@@ -108,21 +118,26 @@ void execute_command_line(ShellState &state, std::string line,
     if (line.empty())
         return;
 
+    const ExecutionClock::time_point started_at = ExecutionClock::now();
+
     process::cleanup_finished_processes(state);
 
     if (!features::expand_history(state, line)) {
         state.last_status = 1;
+        update_last_exec_seconds(state, started_at);
         return;
     }
 
     parser::CommandList command_line = parser::parse_command_line(line);
     if (!command_line.valid) {
         state.last_status = 2;
+        update_last_exec_seconds(state, started_at);
         return;
     }
 
     if (!builtins::expand_aliases(state, command_line)) {
         state.last_status = 1;
+        update_last_exec_seconds(state, started_at);
         return;
     }
 
@@ -134,6 +149,7 @@ void execute_command_line(ShellState &state, std::string line,
             std::cerr
                 << "background conditional execution not implemented yet\n";
             state.last_status = 1;
+            update_last_exec_seconds(state, started_at);
             return;
         }
 
@@ -149,6 +165,7 @@ void execute_command_line(ShellState &state, std::string line,
             state.last_status = chain_status;
             executed_any_pipeline = true;
             if (!state.running) {
+                update_last_exec_seconds(state, started_at);
                 return;
             }
         }
@@ -161,6 +178,8 @@ void execute_command_line(ShellState &state, std::string line,
     if (options.save_history) {
         features::save_command_line(state, line);
     }
+
+    update_last_exec_seconds(state, started_at);
 }
 
 int execute_stream(ShellState &state, std::istream &stream,

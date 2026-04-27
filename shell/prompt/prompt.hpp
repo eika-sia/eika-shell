@@ -10,9 +10,10 @@ namespace shell::prompt {
 
 struct PromptLayout {
     std::string header_rendered;
-    size_t header_display_width = 0;
     std::string input_prefix_rendered;
     size_t prompt_prefix_display_width = 0;
+    std::string input_right_rendered;
+    size_t input_right_display_width = 0;
 };
 
 struct InputRenderState {

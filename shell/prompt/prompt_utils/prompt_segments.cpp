@@ -1,6 +1,8 @@
 #include "prompt_segments.hpp"
 
 #include <cerrno>
+#include <chrono>
+#include <ctime>
 #include <fcntl.h>
 #include <linux/limits.h>
 #include <optional>
@@ -21,6 +23,8 @@ std::string sgr(const char *code) { return std::string("\033[") + code + "m"; }
 struct StyleToken {
     const char *name;
     const char *code;
+    bool changes_background = false;
+    PromptColor background = PromptColor::Default;
 };
 
 struct GitPromptInfo {
@@ -83,6 +87,22 @@ std::string get_hostname_text() {
 
     hostname[sizeof(hostname) - 1] = '\0';
     return hostname;
+}
+
+std::string get_current_time_text() {
+    const std::time_t now =
+        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm local_time{};
+    if (localtime_r(&now, &local_time) == nullptr) {
+        return "";
+    }
+
+    char buffer[6] = {};
+    if (std::strftime(buffer, sizeof(buffer), "%H:%M", &local_time) == 0) {
+        return "";
+    }
+
+    return buffer;
 }
 
 std::optional<std::string>
@@ -321,6 +341,10 @@ std::string build_background_segment(const shell::ShellState &state) {
     return count == 0 ? "" : "| bg: " + std::to_string(count);
 }
 
+std::string build_exec_time_segment(const shell::ShellState &state) {
+    return std::to_string(state.last_exec_seconds) + "s";
+}
+
 std::string build_git_segment(const shell::ShellState &state) {
     const GitPromptInfo info = query_git_prompt_info(state);
     if (!info.in_repo || info.ref_name.empty()) {
@@ -350,15 +374,102 @@ std::string build_git_segment(const shell::ShellState &state) {
     return segment;
 }
 
-std::optional<std::string> render_style_token(const std::string &token) {
+const char *foreground_sgr_code(PromptColor color) {
+    switch (color) {
+    case PromptColor::Default:
+        return "39";
+    case PromptColor::Black:
+        return "30";
+    case PromptColor::Orange:
+        return "38;5;208";
+    case PromptColor::Red:
+        return "31";
+    case PromptColor::Green:
+        return "32";
+    case PromptColor::Yellow:
+        return "33";
+    case PromptColor::Blue:
+        return "38;5;24";
+    case PromptColor::Magenta:
+        return "35";
+    case PromptColor::Cyan:
+        return "36";
+    case PromptColor::White:
+        return "97";
+    case PromptColor::BrightBlack:
+        return "90";
+    case PromptColor::BrightRed:
+        return "91";
+    case PromptColor::BrightGreen:
+        return "92";
+    case PromptColor::BrightYellow:
+        return "93";
+    case PromptColor::BrightBlue:
+        return "94";
+    case PromptColor::BrightMagenta:
+        return "95";
+    case PromptColor::BrightCyan:
+        return "96";
+    case PromptColor::BrightWhite:
+        return "97";
+    }
+
+    return "39";
+}
+
+const char *background_sgr_code(PromptColor color) {
+    switch (color) {
+    case PromptColor::Default:
+        return "49";
+    case PromptColor::Black:
+        return "40";
+    case PromptColor::Orange:
+        return "48;5;208";
+    case PromptColor::Red:
+        return "41";
+    case PromptColor::Green:
+        return "42";
+    case PromptColor::Yellow:
+        return "43";
+    case PromptColor::Blue:
+        return "48;5;24";
+    case PromptColor::Magenta:
+        return "45";
+    case PromptColor::Cyan:
+        return "46";
+    case PromptColor::White:
+        return "107";
+    case PromptColor::BrightBlack:
+        return "100";
+    case PromptColor::BrightRed:
+        return "101";
+    case PromptColor::BrightGreen:
+        return "102";
+    case PromptColor::BrightYellow:
+        return "103";
+    case PromptColor::BrightBlue:
+        return "104";
+    case PromptColor::BrightMagenta:
+        return "105";
+    case PromptColor::BrightCyan:
+        return "106";
+    case PromptColor::BrightWhite:
+        return "107";
+    }
+
+    return "49";
+}
+
+std::optional<RenderedToken> render_style_token(const std::string &token) {
     static const StyleToken style_tokens[] = {
-        {"reset", "0"},
+        {"reset", "0", true, PromptColor::Default},
         {"fg_reset", "39"},
-        {"bg_reset", "49"},
+        {"bg_reset", "49", true, PromptColor::Default},
         {"bold", "1"},
         {"dim", "2"},
         {"underline", "4"},
         {"black", "30"},
+        {"orange", "38;5;208"},
         {"red", "31"},
         {"green", "32"},
         {"yellow", "33"},
@@ -376,25 +487,27 @@ std::optional<std::string> render_style_token(const std::string &token) {
         {"bright_purple", "95"},
         {"bright_cyan", "96"},
         {"bright_white", "97"},
-        {"bg_black", "40"},
-        {"bg_red", "41"},
-        {"bg_green", "42"},
-        {"bg_yellow", "43"},
-        {"bg_blue", "48;5;24"},
-        {"bg_magenta", "45"},
-        {"bg_purple", "45"},
-        {"bg_cyan", "46"},
-        {"bg_white", "107"},
-        {"bg_bright_black", "100"},
-        {"bg_bright_red", "101"},
-        {"bg_bright_green", "102"},
-        {"bg_bright_yellow", "103"},
-        {"bg_bright_blue", "104"},
-        {"bg_bright_magenta", "105"},
-        {"bg_bright_purple", "105"},
-        {"bg_bright_cyan", "106"},
-        {"bg_bright_white", "107"},
+        {"bg_black", "40", true, PromptColor::Black},
+        {"bg_orange", "48;5;208", true, PromptColor::Orange},
+        {"bg_red", "41", true, PromptColor::Red},
+        {"bg_green", "42", true, PromptColor::Green},
+        {"bg_yellow", "43", true, PromptColor::Yellow},
+        {"bg_blue", "48;5;24", true, PromptColor::Blue},
+        {"bg_magenta", "45", true, PromptColor::Magenta},
+        {"bg_purple", "45", true, PromptColor::Magenta},
+        {"bg_cyan", "46", true, PromptColor::Cyan},
+        {"bg_white", "107", true, PromptColor::White},
+        {"bg_bright_black", "100", true, PromptColor::BrightBlack},
+        {"bg_bright_red", "101", true, PromptColor::BrightRed},
+        {"bg_bright_green", "102", true, PromptColor::BrightGreen},
+        {"bg_bright_yellow", "103", true, PromptColor::BrightYellow},
+        {"bg_bright_blue", "104", true, PromptColor::BrightBlue},
+        {"bg_bright_magenta", "105", true, PromptColor::BrightMagenta},
+        {"bg_bright_purple", "105", true, PromptColor::BrightMagenta},
+        {"bg_bright_cyan", "106", true, PromptColor::BrightCyan},
+        {"bg_bright_white", "107", true, PromptColor::BrightWhite},
         {"bold_black", "1;30"},
+        {"bold_orange", "1;38;5;208"},
         {"bold_red", "1;31"},
         {"bold_green", "1;32"},
         {"bold_yellow", "1;33"},
@@ -407,61 +520,84 @@ std::optional<std::string> render_style_token(const std::string &token) {
 
     for (const StyleToken &style : style_tokens) {
         if (token == style.name) {
-            return sgr(style.code);
+            return RenderedToken{
+                sgr(style.code), PromptTokenKind::Style,
+                PromptStyleEffect{style.changes_background, style.background}};
         }
     }
 
     return std::nullopt;
 }
 
-std::optional<std::string> render_named_token(const shell::ShellState &state,
-                                              const std::string &token) {
-    if (const std::optional<std::string> style = render_style_token(token);
+std::optional<RenderedToken> render_named_token(const shell::ShellState &state,
+                                                const std::string &token) {
+    if (const std::optional<RenderedToken> style = render_style_token(token);
         style.has_value()) {
         return style;
     }
 
     if (token == "n") {
-        return std::string("\n");
+        return RenderedToken{std::string("\n"), PromptTokenKind::Newline, {}};
+    }
+    if (token == "powerline_left_auto" || token == "pl_left_auto") {
+        return RenderedToken{"", PromptTokenKind::AutoPowerlineLeft, {}};
+    }
+    if (token == "powerline_right_auto" || token == "pl_right_auto") {
+        return RenderedToken{"", PromptTokenKind::AutoPowerlineRight, {}};
     }
     if (token == "arrow" || token == "prompt") {
-        return std::string("╰─❯ ");
+        return RenderedToken{std::string("╰─❯ "), PromptTokenKind::Data, {}};
     }
     if (token == "powerline_right" || token == "pl_right") {
-        return std::string("");
+        return RenderedToken{std::string(""), PromptTokenKind::Data, {}};
     }
     if (token == "powerline_left" || token == "pl_left") {
-        return std::string("");
+        return RenderedToken{std::string(""), PromptTokenKind::Data, {}};
     }
     if (token == "powerline_thin_right" || token == "pl_right_thin") {
-        return std::string("");
+        return RenderedToken{std::string(""), PromptTokenKind::Data, {}};
     }
     if (token == "powerline_thin_left" || token == "pl_left_thin") {
-        return std::string("");
+        return RenderedToken{std::string(""), PromptTokenKind::Data, {}};
     }
     if (token == "user") {
-        return get_display_user(state);
+        return RenderedToken{
+            get_display_user(state), PromptTokenKind::Data, {}};
     }
     if (token == "host" || token == "hostname") {
-        return get_hostname_text();
+        return RenderedToken{get_hostname_text(), PromptTokenKind::Data, {}};
     }
     if (token == "dir") {
-        return get_display_directory(state);
+        return RenderedToken{
+            get_display_directory(state), PromptTokenKind::Data, {}};
+    }
+    if (token == "curr_time") {
+        return RenderedToken{
+            get_current_time_text(), PromptTokenKind::Data, {}};
     }
     if (token == "cwd") {
-        return get_current_working_directory();
+        return RenderedToken{
+            get_current_working_directory(), PromptTokenKind::Data, {}};
     }
     if (token == "location") {
-        return build_location_segment(state);
+        return RenderedToken{
+            build_location_segment(state), PromptTokenKind::Data, {}};
     }
     if (token == "status") {
-        return build_status_segment(state);
+        return RenderedToken{
+            build_status_segment(state), PromptTokenKind::Data, {}};
     }
     if (token == "git") {
-        return build_git_segment(state);
+        return RenderedToken{
+            build_git_segment(state), PromptTokenKind::Data, {}};
     }
     if (token == "bg") {
-        return build_background_segment(state);
+        return RenderedToken{
+            build_background_segment(state), PromptTokenKind::Data, {}};
+    }
+    if (token == "exec_time") {
+        return RenderedToken{
+            build_exec_time_segment(state), PromptTokenKind::Data, {}};
     }
 
     return std::nullopt;
@@ -469,9 +605,23 @@ std::optional<std::string> render_named_token(const shell::ShellState &state,
 
 } // namespace
 
-std::optional<std::string> render_token(const shell::ShellState &state,
-                                        const std::string &token) {
+std::optional<RenderedToken> render_token(const shell::ShellState &state,
+                                          const std::string &token) {
     return render_named_token(state, token);
 }
+
+std::string render_powerline_left_transition(PromptColor from_background,
+                                             PromptColor to_background) {
+    return sgr(foreground_sgr_code(to_background)) +
+           sgr(background_sgr_code(from_background)) + "";
+}
+
+std::string render_powerline_right_transition(PromptColor from_background,
+                                              PromptColor to_background) {
+    return sgr(foreground_sgr_code(from_background)) +
+           sgr(background_sgr_code(to_background)) + "";
+}
+
+std::string final_reset_sequence() { return sgr("0") + sgr("49"); }
 
 } // namespace shell::prompt::prompt_segments

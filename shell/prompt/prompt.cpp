@@ -34,16 +34,54 @@ std::string render_prompt_layout(const PromptLayout &layout) {
     return layout.header_rendered + "\n" + layout.input_prefix_rendered;
 }
 
+bool should_render_input_right_prompt(const PromptLayout &layout,
+                                      size_t input_display_width,
+                                      size_t columns) {
+    if (layout.input_right_rendered.empty()) {
+        return false;
+    }
+
+    if (render_utils::compute_rendered_rows(layout.prompt_prefix_display_width,
+                                            input_display_width,
+                                            columns) != 1) {
+        return false;
+    }
+
+    return layout.prompt_prefix_display_width + input_display_width + 1 +
+               layout.input_right_display_width <=
+           columns;
+}
+
+void append_move_to_column(std::string &frame, size_t column) {
+    frame += "\r";
+    if (column > 0) {
+        frame += "\033[" + std::to_string(column) + "C";
+    }
+}
+
+void append_input_right_prompt(std::string &frame, const PromptLayout &layout,
+                               size_t columns) {
+    append_move_to_column(frame, columns - layout.input_right_display_width);
+    frame += layout.input_right_rendered;
+}
+
 } // namespace
 
 std::string build_prompt(const shell::ShellState &state,
                          InputRenderState &render_state) {
     const PromptLayout layout = prompt_template::build_layout(state);
+    const size_t columns = render_utils::get_terminal_columns();
     reset_input_render_state(render_state);
-    update_input_render_state(render_state, layout, 0, 0,
-                              render_utils::get_terminal_columns());
+    update_input_render_state(render_state, layout, 0, 0, columns);
     render_state.needs_full_redraw = true;
-    return render_prompt_layout(layout);
+
+    std::string rendered = render_prompt_layout(layout);
+    if (should_render_input_right_prompt(layout, 0, columns)) {
+        append_input_right_prompt(rendered, layout, columns);
+        append_move_to_column(rendered, layout.prompt_prefix_display_width);
+    }
+
+    return rendered;
 }
 
 InputFrame
@@ -77,6 +115,8 @@ build_redraw_input_frame(const InputRenderState &current_render_state,
         render_utils::compute_cursor_geometry(
             layout.prompt_prefix_display_width, cursor_display_width, columns,
             cursor_display_width == line_display_width);
+    const bool right_prompt_visible =
+        should_render_input_right_prompt(layout, line_display_width, columns);
 
     InputFrame result;
     result.next_render_state = current_render_state;
@@ -97,14 +137,13 @@ build_redraw_input_frame(const InputRenderState &current_render_state,
     result.frame += prefix;
     result.frame += rendered;
 
-    if (end.row > cursor_geometry.row) {
+    if (right_prompt_visible) {
+        append_input_right_prompt(result.frame, layout, columns);
+    } else if (end.row > cursor_geometry.row) {
         result.frame +=
             "\033[" + std::to_string(end.row - cursor_geometry.row) + "A";
     }
-    result.frame += "\r";
-    if (cursor_geometry.column > 0) {
-        result.frame += "\033[" + std::to_string(cursor_geometry.column) + "C";
-    }
+    append_move_to_column(result.frame, cursor_geometry.column);
 
     update_input_render_state(result.next_render_state, layout,
                               line_display_width, cursor_display_width,
