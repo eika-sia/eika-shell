@@ -114,6 +114,7 @@ std::string trim(const std::string &source) {
 
 void execute_command_line(ShellState &state, std::string line,
                           ExecuteOptions options) {
+    state.last_status = 0;
     line = trim(line);
     if (line.empty())
         return;
