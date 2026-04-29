@@ -19,33 +19,6 @@ winsize get_terminal_size() {
     return ws;
 }
 
-size_t measure_rendered_block_rows(const std::string &text, size_t columns) {
-    if (text.empty()) {
-        return 0;
-    }
-
-    size_t rows = 0;
-    size_t line_start = 0;
-    while (line_start <= text.size()) {
-        const size_t line_end = text.find('\n', line_start);
-        const size_t segment_end =
-            line_end == std::string::npos ? text.size() : line_end;
-        rows +=
-            compute_rendered_rows(0,
-                                  measure_display_width(text.substr(
-                                      line_start, segment_end - line_start)),
-                                  columns);
-
-        if (line_end == std::string::npos) {
-            break;
-        }
-
-        line_start = line_end + 1;
-    }
-
-    return rows;
-}
-
 } // namespace
 
 size_t get_terminal_columns() {
@@ -98,6 +71,33 @@ size_t measure_display_width(const std::string &text) {
     }
 
     return width;
+}
+
+size_t measure_rendered_block_rows(const std::string &text, size_t columns) {
+    if (text.empty()) {
+        return 0;
+    }
+
+    size_t rows = 0;
+    size_t line_start = 0;
+    while (line_start <= text.size()) {
+        const size_t line_end = text.find('\n', line_start);
+        const size_t segment_end =
+            line_end == std::string::npos ? text.size() : line_end;
+        rows +=
+            compute_rendered_rows(0,
+                                  measure_display_width(text.substr(
+                                      line_start, segment_end - line_start)),
+                                  columns);
+
+        if (line_end == std::string::npos) {
+            break;
+        }
+
+        line_start = line_end + 1;
+    }
+
+    return rows;
 }
 
 CursorGeometry compute_render_end_geometry(size_t base_column,

@@ -84,22 +84,12 @@ std::string build_prompt(const shell::ShellState &state,
     return rendered;
 }
 
-InputFrame
-build_redraw_input_frame(const InputRenderState &current_render_state,
-                         const shell::ShellState &state,
-                         const std::string &line, size_t cursor,
-                         bool full_prompt) {
-    const size_t columns = render_utils::get_terminal_columns();
-    const bool terminal_resized =
-        columns != current_render_state.terminal_columns;
-    const bool redraw_full_prompt = full_prompt || terminal_resized ||
-                                    current_render_state.needs_full_redraw;
-    const PromptLayout layout = redraw_full_prompt
-                                    ? prompt_template::build_layout(state)
-                                    : current_render_state.layout;
-    const std::string prefix = redraw_full_prompt
-                                   ? render_prompt_layout(layout)
-                                   : layout.input_prefix_rendered;
+namespace {
+
+InputFrame build_input_frame(const shell::ShellState &state,
+                             const std::string &line, size_t cursor,
+                             const PromptLayout &layout,
+                             const std::string &prefix, size_t columns) {
     const std::string rendered =
         features::highlighting::render_highlighted_line(state, line);
     const size_t clamped_cursor = cursor > line.size() ? line.size() : cursor;
@@ -119,22 +109,7 @@ build_redraw_input_frame(const InputRenderState &current_render_state,
         should_render_input_right_prompt(layout, line_display_width, columns);
 
     InputFrame result;
-    result.next_render_state = current_render_state;
-
-    if (redraw_full_prompt) {
-        if (terminal_resized) {
-            result.frame = render_utils::clear_previous_prompt_block(
-                current_render_state, current_render_state.terminal_columns,
-                columns);
-        } else {
-            result.frame =
-                render_utils::clear_rendered_prompt_block(current_render_state);
-        }
-    } else {
-        result.frame = render_utils::clear_previous_input_block(
-            current_render_state, columns);
-    }
-    result.frame += prefix;
+    result.frame = prefix;
     result.frame += rendered;
 
     if (right_prompt_visible) {
@@ -148,6 +123,54 @@ build_redraw_input_frame(const InputRenderState &current_render_state,
     update_input_render_state(result.next_render_state, layout,
                               line_display_width, cursor_display_width,
                               columns);
+    return result;
+}
+
+} // namespace
+
+InputFrame build_fresh_input_frame(const shell::ShellState &state,
+                                   const std::string &line, size_t cursor) {
+    const size_t columns = render_utils::get_terminal_columns();
+    const PromptLayout layout = prompt_template::build_layout(state);
+    return build_input_frame(state, line, cursor, layout,
+                             render_prompt_layout(layout), columns);
+}
+
+InputFrame
+build_redraw_input_frame(const InputRenderState &current_render_state,
+                         const shell::ShellState &state,
+                         const std::string &line, size_t cursor,
+                         bool full_prompt) {
+    const size_t columns = render_utils::get_terminal_columns();
+    const bool terminal_resized =
+        columns != current_render_state.terminal_columns;
+    const bool redraw_full_prompt = full_prompt || terminal_resized ||
+                                    current_render_state.needs_full_redraw;
+    const PromptLayout layout = redraw_full_prompt
+                                    ? prompt_template::build_layout(state)
+                                    : current_render_state.layout;
+    const std::string prefix = redraw_full_prompt
+                                   ? render_prompt_layout(layout)
+                                   : layout.input_prefix_rendered;
+    InputFrame result =
+        build_input_frame(state, line, cursor, layout, prefix, columns);
+
+    if (redraw_full_prompt) {
+        if (terminal_resized) {
+            result.frame = render_utils::clear_previous_prompt_block(
+                               current_render_state,
+                               current_render_state.terminal_columns, columns) +
+                           result.frame;
+        } else {
+            result.frame = render_utils::clear_rendered_prompt_block(
+                               current_render_state) +
+                           result.frame;
+        }
+    } else {
+        result.frame = render_utils::clear_previous_input_block(
+                           current_render_state, columns) +
+                       result.frame;
+    }
     return result;
 }
 

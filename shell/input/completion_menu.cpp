@@ -19,6 +19,45 @@ const std::string reverse_video = "\033[7m";
 const std::string reset = "\033[0m";
 const std::string none;
 
+size_t visible_menu_row_cap(size_t terminal_rows) {
+    if (terminal_rows <= 4) {
+        return 1;
+    }
+
+    return std::max<size_t>(4, terminal_rows / 3);
+}
+
+std::string truncate_plain_text(const std::string &text, size_t max_width) {
+    if (max_width == 0 || text.empty()) {
+        return "";
+    }
+
+    if (prompt::render_utils::measure_display_width(text) <= max_width) {
+        return text;
+    }
+
+    if (max_width <= 3) {
+        return std::string(max_width, '.');
+    }
+
+    std::string out;
+    size_t width = 0;
+    for (size_t i = 0; i < text.size() && width + 3 < max_width;) {
+        const size_t start = i;
+        ++i;
+        while (i < text.size() &&
+               (static_cast<unsigned char>(text[i]) & 0xC0U) == 0x80U) {
+            ++i;
+        }
+
+        out.append(text, start, i - start);
+        ++width;
+    }
+
+    out += "...";
+    return out;
+}
+
 const std::string &
 color_code_for_candidate(features::CompletionDisplayKind kind) {
     switch (kind) {
@@ -37,10 +76,11 @@ color_code_for_candidate(features::CompletionDisplayKind kind) {
 
 std::string render_candidate_cell(const std::string &label,
                                   features::CompletionDisplayKind kind,
-                                  size_t cell_width, bool selected) {
-    std::string padded = label;
+                                  size_t label_width, size_t cell_width,
+                                  bool selected) {
+    std::string padded = truncate_plain_text(label, label_width);
     const size_t display_width =
-        prompt::render_utils::measure_display_width(label);
+        prompt::render_utils::measure_display_width(padded);
     if (display_width < cell_width) {
         padded.append(cell_width - display_width, ' ');
     }
@@ -76,12 +116,13 @@ size_t max_panel_rows(const prompt::InputRenderState &render_state,
     const size_t terminal_rows = prompt::render_utils::get_terminal_rows();
     const prompt::render_utils::RenderMetrics metrics =
         prompt::render_utils::measure_render_state(render_state, columns);
+    const size_t capped_rows = visible_menu_row_cap(terminal_rows);
 
     if (terminal_rows <= metrics.total_rows) {
         return 1;
     }
 
-    return terminal_rows - metrics.total_rows;
+    return std::min(terminal_rows - metrics.total_rows, capped_rows);
 }
 
 size_t compute_window_start_row(size_t total_rows, size_t visible_rows,
@@ -98,11 +139,12 @@ size_t compute_window_start_row(size_t total_rows, size_t visible_rows,
 }
 
 std::string build_truncation_footer(size_t first_item_index,
-                                    size_t last_item_index,
-                                    size_t total_items) {
-    return dim + "Items " + std::to_string(first_item_index + 1) + " to " +
-           std::to_string(last_item_index + 1) + " of " +
-           std::to_string(total_items) + reset;
+                                    size_t last_item_index, size_t total_items,
+                                    size_t columns) {
+    const std::string footer = "Items " + std::to_string(first_item_index + 1) +
+                               " to " + std::to_string(last_item_index + 1) +
+                               " of " + std::to_string(total_items);
+    return dim + truncate_plain_text(footer, columns) + reset;
 }
 
 void append_block_line(below_prompt_panel::Block &block,
@@ -137,7 +179,11 @@ below_prompt_panel::Block build_candidates_block(
     }
 
     const size_t gutter = 2;
-    const size_t cell_width = max_width + gutter;
+    const size_t cell_width =
+        columns == 0
+            ? 1
+            : std::max<size_t>(1, std::min(max_width + gutter, columns));
+    const size_t label_width = cell_width > gutter ? cell_width - gutter : 1;
     const size_t cols =
         cell_width == 0 ? 1 : std::max<size_t>(1, columns / cell_width);
     const size_t total_rows = (labels.size() + cols - 1) / cols;
@@ -172,7 +218,7 @@ below_prompt_panel::Block build_candidates_block(
                 has_selected_candidate && index == selected_index;
             line += render_candidate_cell(
                 labels[index], selection.display_candidates[index].kind,
-                cell_width, is_selected);
+                label_width, cell_width, is_selected);
         }
 
         append_block_line(block, line);
@@ -184,14 +230,14 @@ below_prompt_panel::Block build_candidates_block(
             std::min(selection.display_candidates.size(),
                      window_end_row * cols) -
             1;
-        append_block_line(block, build_truncation_footer(
-                                     first_visible_item, last_visible_item,
-                                     selection.display_candidates.size()));
+        append_block_line(block,
+                          build_truncation_footer(
+                              first_visible_item, last_visible_item,
+                              selection.display_candidates.size(), columns));
     }
 
-    const size_t rendered_lines = (window_end_row - window_start_row) +
-                                  (truncated && panel_row_limit > 1);
-    block.rows = rendered_lines;
+    block.rows =
+        prompt::render_utils::measure_rendered_block_rows(block.text, columns);
     return block;
 }
 

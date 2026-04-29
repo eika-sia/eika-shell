@@ -165,10 +165,11 @@ void redraw_after_resize(InputContext &context) {
         return;
     }
 
-    std::string frame = completion_menu::build_clear_prompt_and_menu_frame(
-        context.render_state, context.completion_menu_state);
-
-    shell::prompt::InputFrame prompt_frame = build_prompt_frame(context, true);
+    context.completion_menu_state = {};
+    std::string frame = "\033[2J\033[H";
+    shell::prompt::InputFrame prompt_frame =
+        shell::prompt::build_fresh_input_frame(
+            context.state, context.buffer.text, context.buffer.cursor);
     frame += prompt_frame.frame;
 
     if (has_active_completion_selection(context)) {

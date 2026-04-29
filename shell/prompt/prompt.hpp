@@ -31,6 +31,8 @@ struct InputFrame {
 
 std::string build_prompt(const shell::ShellState &state,
                          InputRenderState &render_state);
+InputFrame build_fresh_input_frame(const shell::ShellState &state,
+                                   const std::string &line, size_t cursor);
 InputFrame
 build_redraw_input_frame(const InputRenderState &current_render_state,
                          const shell::ShellState &state,
