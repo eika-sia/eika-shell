@@ -112,11 +112,6 @@ inline bool restore_snapshot(editor_state::LineBuffer &buffer,
     return editor_state::restore_buffer(buffer, snapshot.text, snapshot.cursor);
 }
 
-inline bool same_snapshot(const BufferSnapshot &lhs,
-                          const BufferSnapshot &rhs) {
-    return lhs.cursor == rhs.cursor && lhs.text == rhs.text;
-}
-
 inline void invalidate_redo(UndoState &undo_state) {
     undo_state.redo_stack.clear();
 }
@@ -125,12 +120,16 @@ inline void close_undo_group(UndoState &undo_state) {
     undo_state.open_group = UndoGroupKind::None;
 }
 
+void clear_transient_preview_states(EditorSessionState &session) {
+    session.completion = {};
+}
+
 void reset_transient_state_for_restore(EditorSessionState &session,
                                        size_t history_size) {
     if (session.history.active)
         editor_state::reset_history_browse(session.history, history_size);
 
-    session.completion = {};
+    clear_transient_previews(session);
 
     reset_kill_chain(session.kill_ring);
 
@@ -155,11 +154,11 @@ void record_successful_edit(EditorSessionState &session, BufferSnapshot before,
 bool completion_matches_anchor(const CompletionSelectionState &completion,
                                const editor_state::LineBuffer &buffer) {
     const size_t anchor_cursor =
-        completion.anchor_cursor > completion.anchor_text.size()
-            ? completion.anchor_text.size()
-            : completion.anchor_cursor;
+        completion.anchor.cursor > completion.anchor.text.size()
+            ? completion.anchor.text.size()
+            : completion.anchor.cursor;
 
-    return buffer.text == completion.anchor_text &&
+    return buffer.text == completion.anchor.text &&
            buffer.cursor == anchor_cursor;
 }
 
@@ -188,6 +187,19 @@ void note_non_kill_command(EditorSessionState &session,
     }
 
     close_undo_group(session.undo);
+}
+
+TransientPreviewKind
+active_transient_preview_kind(const EditorSessionState &session) {
+    if (session.completion.active) {
+        return TransientPreviewKind::Completion;
+    }
+
+    return TransientPreviewKind::None;
+}
+
+void clear_transient_previews(EditorSessionState &session) {
+    clear_transient_preview_states(session);
 }
 
 bool insert_typed_text(EditorSessionState &session,
@@ -350,8 +362,7 @@ void begin_completion_selection(
 
     session.completion.active = true;
     session.completion.preview_active = false;
-    session.completion.anchor_text = buffer.text;
-    session.completion.anchor_cursor = buffer.cursor;
+    session.completion.anchor = capture_snapshot(buffer);
     session.completion.replace_begin = replace_begin;
     session.completion.replace_end = replace_end;
     session.completion.candidates = std::move(candidates);
@@ -390,7 +401,7 @@ bool step_completion_selection(EditorSessionState &session,
     }
 
     return editor_state::replace_range_from_anchor(
-        buffer, session.completion.anchor_text,
+        buffer, session.completion.anchor.text,
         session.completion.replace_begin, session.completion.replace_end,
         session.completion.candidates[session.completion.selected_index]);
 }
@@ -403,9 +414,7 @@ bool cancel_completion_selection(EditorSessionState &session,
 
     if (session.completion.preview_active) {
         prepare_for_buffer_edit(session, history_size);
-        bool changed =
-            editor_state::restore_buffer(buffer, session.completion.anchor_text,
-                                         session.completion.anchor_cursor);
+        bool changed = restore_snapshot(buffer, session.completion.anchor);
         session.completion = {};
         return changed;
     }
@@ -436,11 +445,36 @@ bool accept_completion_selection(EditorSessionState &session,
     }
 
     invalidate_redo(session.undo);
-    session.undo.undo_stack.push_back(BufferSnapshot{
-        session.completion.anchor_text, session.completion.anchor_cursor});
+    session.undo.undo_stack.push_back(session.completion.anchor);
 
     session.completion = {};
     return true;
+}
+
+bool cancel_active_preview(EditorSessionState &session,
+                           editor_state::LineBuffer &buffer,
+                           size_t history_size) {
+    switch (active_transient_preview_kind(session)) {
+    case TransientPreviewKind::Completion:
+        return cancel_completion_selection(session, buffer, history_size);
+    case TransientPreviewKind::None:
+        break;
+    }
+
+    return false;
+}
+
+bool accept_active_preview(EditorSessionState &session,
+                           editor_state::LineBuffer &buffer,
+                           size_t history_size) {
+    switch (active_transient_preview_kind(session)) {
+    case TransientPreviewKind::Completion:
+        return accept_completion_selection(session, buffer, history_size);
+    case TransientPreviewKind::None:
+        break;
+    }
+
+    return false;
 }
 
 bool undo(EditorSessionState &session, editor_state::LineBuffer &buffer,

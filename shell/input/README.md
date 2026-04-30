@@ -1,8 +1,8 @@
 # Input Stack
 
 - `input.cpp` main orchestration and dispatching
-- `below_prompt_panel.cpp` generic cursor and frame helpers for panels rendered below the current prompt/input block
-- `completion_menu.cpp` renders and clears the completion candidate menu below the prompt
+- `panels/panel.cpp` generic cursor and frame helpers for panels rendered below the current prompt/input block
+- `panels/completion/completion_panel.cpp` builds the completion candidate panel block
 - `key/` converts input bytes to semantic actions (like pasted text, escape sequences)
 - `editor_state/` mutates the line buffer and history browse state
 - `session_state/` handles per-line interaction state such as the kill ring, active completion selection, and undo/redo history
@@ -28,8 +28,8 @@ input::read_command_line()
     +-- session_state: kill ring, yank-pop, history invalidation, completion selection, undo/redo snapshots
     +-- completion: compute completion action
     +-- prompt: build redraw frames for the input block
-    +-- below_prompt_panel: generic below-input panel frames
-    +-- completion_menu: render/dismiss candidate grid below the prompt
+    +-- panels: generic below-input panel frames
+    +-- panels/completion: build candidate grid blocks for the panel renderer
     v
 InputResult { line, eof, interrupted }
 ```
@@ -62,18 +62,18 @@ Key local types:
 - `InputSession`
   Owns the saved `termios` state and restores it on scope exit.
 - `InputContext`
-  Bundles the current shell state, prompt render state, editable buffer, per line session state, completion-menu render state, initial history size, and output `InputResult`.
+  Bundles the current shell state, prompt render state, editable buffer, per line session state, active panel render state, initial history size, and output `InputResult`.
 
 The main loop does this:
 1. `key::read_event()` reads one semantic event.
 2. System events are handled first:
    - `ReadEof` -> finish with `eof = true`
-   - `Interrupted` -> replace the rendered prompt/menu block with a fresh prompt and finish with `interrupted = true`
+   - `Interrupted` -> replace the rendered prompt/panel block with a fresh prompt and finish with `interrupted = true`
 3. Content events are dispatched:
    - `TextInput` -> insert text into the line buffer
    - `Paste` -> normalize newlines/tabs into spaces, then insert
    - `Key` -> route through character bindings or special-key bindings
-   - `Resized` -> clear and redraw the prompt, then redraw the completion menu if it is active
+   - `Resized` -> clear and redraw the prompt, then redraw the active panel if one exists
    - `Ignored` -> do nothing
 4. On finish, copy `buffer.text` into `InputResult.line`.
 
@@ -85,8 +85,8 @@ The main loop does this:
 - mapping key bindings to editor actions
 - paste normalization for a single-line editor
 - calling completion and deciding whether to replace text or open a completion-selection session
-- deciding whether undo/redo should act on history or cancel active completion preview first
-- deciding when prompt redraws should include menu show/update/dismiss work
+- deciding whether undo/redo should act on history or cancel an active transient preview first
+- deciding when prompt redraws should include panel show/update/dismiss work
 - deciding when input is finished
 
 `input.cpp` should not own:
@@ -94,7 +94,7 @@ The main loop does this:
 - text buffer algorithms
 - kill ring internals
 - history browse internals
-- completion candidate layout or ANSI menu rendering
+- completion candidate layout or ANSI panel rendering
 
 ## `key/`: Terminal Byte Decoding
 
@@ -285,13 +285,19 @@ Current grouping rules:
 Current boundary rules:
 - movement closes the current undo group
 - `Esc`, `Enter`, `Ctrl+L`, and opening completion close the current undo group
-- undo/redo restore clears transient history/completion/yank state before restoring the target snapshot
+- undo/redo restore clears transient history/preview/yank state before restoring the target snapshot
 
 Current completion interaction rules:
 - preview cycling does not create undo history
 - `Esc` cancels preview and restores the anchor buffer without creating an undo step
 - accepting a preview creates one undo step back to the anchor buffer
-- if completion selection is active, `Ctrl+Z` and `Alt+Z` cancel the preview/menu first instead of immediately walking undo/redo history
+- if completion selection is active, `Ctrl+Z` and `Alt+Z` cancel the transient preview first instead of immediately walking undo/redo history
+
+Transient preview helpers:
+- `active_transient_preview_kind(...)` reports which preview mode currently owns the input
+- `cancel_active_preview(...)` restores or clears the active preview
+- `accept_active_preview(...)` commits the active preview as one undoable edit when needed
+- `clear_transient_previews(...)` is the shared reset point for restore paths
 
 ### History Coupling
 
@@ -309,14 +315,14 @@ When a real edit happens while history browsing is active, `session_state` reset
 - the candidate list and selected index
 
 Behavior:
-- first ambiguous `Tab` starts a completion selection session and renders the menu
+- first ambiguous `Tab` starts a completion selection session and renders the panel
 - the first cycling `Tab` applies the first candidate as a preview from the anchor buffer
 - later `Tab`s rotate through candidates by rebuilding from the same anchor buffer
 - `Shift+Tab` reverses that rotation when the terminal reports it as a modified `Tab` event
 - `Esc` cancels and restores the anchor buffer
 - `Enter` accepts the currently previewed text but stays in the input editor
 - ordinary edits, paste, erase, movement, and history navigation accept the preview first, then continue with that command
-- undo and redo are special: while completion selection is active they cancel the preview/menu first instead of touching snapshot history
+- undo and redo are special: while completion selection is active they cancel the preview/panel first instead of touching snapshot history
 
 ## Completion in the Input Pipeline
 
@@ -330,7 +336,7 @@ Completion lives in `features/completion`, but the input stack decides how to ap
 The input layer then chooses behavior:
 - `None` -> no text change
 - `ReplaceToken` -> replace a buffer range and redraw
-- `ShowCandidates` -> begin a completion selection session and render the menu below the prompt
+- `ShowCandidates` -> begin a completion selection session and render the panel below the prompt
 
 ## Prompt Coupling
 
@@ -338,19 +344,19 @@ The input stack depends on `shell::prompt::InputRenderState`, but the ownership 
 
 The prompt layer now exposes 2 useful levels:
 - `prompt::redraw_input_line(...)` for ordinary prompt-only redraws
-- `prompt::build_redraw_input_frame(...)` when `input.cpp` needs to batch a prompt redraw together with completion-menu rendering into one terminal write
+- `prompt::build_redraw_input_frame(...)` when `input.cpp` needs to batch a prompt redraw together with panel rendering into one terminal write
 
-That split matters because the completion menu sits below the prompt block. The prompt layer owns prompt geometry, while `completion_menu.cpp` owns menu geometry relative to the prompt.
+That split matters because the completion panel sits below the prompt block. The prompt layer owns prompt geometry, while `panels/completion/completion_panel.cpp` owns completion layout relative to the prompt.
 
-`below_prompt_panel.cpp` owns:
+`panels/panel.cpp` owns:
 - moving from the live input cursor to the row below the rendered input
 - restoring the live input cursor after a panel render
 - clearing or dismissing arbitrary panel rows below the prompt
 - clearing prompt-plus-panel blocks for resize and interrupt paths
+- generic panel helpers such as text truncation, visible row caps, viewport positioning, line appending, and footer text
 
-`completion_menu.cpp` owns:
+`panels/completion/completion_panel.cpp` owns:
 - candidate label styling and column layout
-- candidate viewport truncation and footer/status rendering for long lists
 - turning completion candidates into a generic below-prompt panel block
 - completion-specific styling such as directory coloring and selected reverse-video cells
 
@@ -403,15 +409,15 @@ Current limitation:
 
 - signal handler sets `g_resize_pending`
 - `key::read_event()` converts that into `InputEventKind::Resized`
-- `input.cpp` clears the old prompt/menu block
+- `input.cpp` clears the old prompt/panel block
 - it rebuilds the prompt with current terminal width
-- if completion selection is still active, it also rebuilds the menu under the resized prompt
+- if a transient panel mode is still active, it also rebuilds the panel under the resized prompt
 
 ### Interrupt
 
 - signal handler sets `g_input_interrupted`
 - `key::read_event()` converts that into `Interrupted`
-- `read_command_line()` clears the prompt/menu block, redraws a fresh prompt in the same frame, and returns
+- `read_command_line()` clears the prompt/panel block, redraws a fresh prompt in the same frame, and returns
   `InputResult{ interrupted = true }`
 
 ### EOF
@@ -435,13 +441,13 @@ Use this rule set when adding features:
 - the feature depends on previous editor commands during the same line read
 - examples: kill-ring rotation, completion session state, search session state, undo groups
 
-### Add it to `completion_menu.cpp` if...
-- the change is about candidate layout or menu rendering under the prompt
-- examples: column packing, selection highlighting, menu pagination, prettier candidate labels, menu-specific cursor choreography
+### Add it to `panels/completion/completion_panel.cpp` if...
+- the change is about completion candidate layout or completion-specific panel styling
+- examples: column packing, selection highlighting, prettier candidate labels, completion-specific coloring
 
-### Add it to `below_prompt_panel.cpp` if...
+### Add it to `panels/panel.cpp` if...
 - the change is generic to any UI panel that lives below the prompt/input block
-- examples: generic cursor restore rules, panel clearing, prompt-plus-panel redraw framing
+- examples: generic cursor restore rules, panel clearing, prompt-plus-panel redraw framing, shared truncation, panel row budgeting, viewport footer text
 
 ### Add it to `input.cpp` if...
 - the change is binding policy or top-level orchestration
@@ -453,8 +459,8 @@ These are the constraints the current refactor is trying to preserve:
 1. `key/` decodes terminal protocol, not shell syntax.
 2. `editor_state/` mutates text, not editor session behavior.
 3. `session_state/` owns kill/yank/history interaction rules.
-4. `below_prompt_panel.cpp` owns generic below-prompt panel frames.
-5. `completion_menu.cpp` owns candidate-menu layout and completion-specific panel styling.
+4. `panels/panel.cpp` owns generic below-prompt panel frames.
+5. `panels/completion/completion_panel.cpp` owns candidate-panel layout and completion-specific panel styling.
 6. `input.cpp` is allowed to decide bindings and redraw policy.
 7. Prompt state must stay explicit.
 8. Raw mode lifetime stays in `input.cpp` with the line-read loop.

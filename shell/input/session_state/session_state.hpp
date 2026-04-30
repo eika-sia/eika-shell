@@ -24,11 +24,15 @@ struct KillRingState {
     YankState yank;
 };
 
+struct BufferSnapshot {
+    std::string text;
+    size_t cursor = 0;
+};
+
 struct CompletionSelectionState {
     bool active = false;
     bool preview_active = false;
-    std::string anchor_text;
-    size_t anchor_cursor = 0;
+    BufferSnapshot anchor;
     size_t replace_begin = 0;
     size_t replace_end = 0;
     std::vector<std::string> candidates;
@@ -36,9 +40,9 @@ struct CompletionSelectionState {
     size_t selected_index = 0;
 };
 
-struct BufferSnapshot {
-    std::string text;
-    size_t cursor = 0;
+enum class TransientPreviewKind {
+    None,
+    Completion,
 };
 
 enum UndoGroupKind {
@@ -68,6 +72,15 @@ void initialize_editor_session(EditorSessionState &session,
                                size_t history_size);
 void note_non_kill_command(EditorSessionState &session,
                            bool invalidate_yank = true);
+TransientPreviewKind
+active_transient_preview_kind(const EditorSessionState &session);
+void clear_transient_previews(EditorSessionState &session);
+bool cancel_active_preview(EditorSessionState &session,
+                           editor_state::LineBuffer &buffer,
+                           size_t history_size);
+bool accept_active_preview(EditorSessionState &session,
+                           editor_state::LineBuffer &buffer,
+                           size_t history_size);
 
 bool insert_typed_text(EditorSessionState &session,
                        editor_state::LineBuffer &buffer, size_t history_size,

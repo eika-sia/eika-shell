@@ -19,40 +19,23 @@ winsize get_terminal_size() {
     return ws;
 }
 
-} // namespace
-
-size_t get_terminal_columns() {
-    const struct winsize ws = get_terminal_size();
-    if (ws.ws_col > 0) {
-        return ws.ws_col;
-    }
-
-    return 80;
-}
-
-size_t get_terminal_rows() {
-    const struct winsize ws = get_terminal_size();
-    if (ws.ws_row > 0) {
-        return ws.ws_row;
-    }
-
-    return 24;
-}
-
-size_t measure_display_width(const std::string &text) {
+size_t measure_display_width_range(const std::string &text, size_t start,
+                                   size_t end) {
     size_t width = 0;
+    size_t i = std::min(start, text.size());
+    const size_t limit = std::min(end, text.size());
 
-    for (size_t i = 0; i < text.size();) {
+    while (i < limit) {
         const unsigned char c = static_cast<unsigned char>(text[i]);
 
         if (c == '\033') {
             ++i;
-            if (i < text.size() && text[i] == '[') {
+            if (i < limit && text[i] == '[') {
                 ++i;
-                while (i < text.size() && !(text[i] >= '@' && text[i] <= '~')) {
+                while (i < limit && !(text[i] >= '@' && text[i] <= '~')) {
                     ++i;
                 }
-                if (i < text.size()) {
+                if (i < limit) {
                     ++i;
                 }
             }
@@ -73,6 +56,34 @@ size_t measure_display_width(const std::string &text) {
     return width;
 }
 
+} // namespace
+
+size_t get_terminal_columns() {
+    const struct winsize ws = get_terminal_size();
+    if (ws.ws_col > 0) {
+        return ws.ws_col;
+    }
+
+    return 80;
+}
+
+size_t get_terminal_rows() {
+    const struct winsize ws = get_terminal_size();
+    if (ws.ws_row > 0) {
+        return ws.ws_row;
+    }
+
+    return 24;
+}
+
+size_t measure_display_width_prefix(const std::string &text, size_t end) {
+    return measure_display_width_range(text, 0, end);
+}
+
+size_t measure_display_width(const std::string &text) {
+    return measure_display_width_prefix(text, text.size());
+}
+
 size_t measure_rendered_block_rows(const std::string &text, size_t columns) {
     if (text.empty()) {
         return 0;
@@ -84,11 +95,9 @@ size_t measure_rendered_block_rows(const std::string &text, size_t columns) {
         const size_t line_end = text.find('\n', line_start);
         const size_t segment_end =
             line_end == std::string::npos ? text.size() : line_end;
-        rows +=
-            compute_rendered_rows(0,
-                                  measure_display_width(text.substr(
-                                      line_start, segment_end - line_start)),
-                                  columns);
+        rows += compute_rendered_rows(
+            0, measure_display_width_range(text, line_start, segment_end),
+            columns);
 
         if (line_end == std::string::npos) {
             break;

@@ -22,6 +22,9 @@ struct InputRenderState {
     size_t cursor_display_width = 0;
     size_t terminal_columns = 80;
     bool needs_full_redraw = false;
+    std::string cached_line_text;
+    std::string cached_line_rendered;
+    size_t cached_line_display_width = 0;
 };
 
 struct InputFrame {

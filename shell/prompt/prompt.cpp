@@ -26,6 +26,24 @@ void update_input_render_state(InputRenderState &render_state,
     render_state.needs_full_redraw = false;
 }
 
+struct RenderedInputLine {
+    std::string text;
+    size_t display_width = 0;
+};
+
+RenderedInputLine render_input_line(const shell::ShellState &state,
+                                    const std::string &line,
+                                    const InputRenderState *cache_state) {
+    if (cache_state != nullptr && cache_state->cached_line_text == line) {
+        return RenderedInputLine{cache_state->cached_line_rendered,
+                                 cache_state->cached_line_display_width};
+    }
+
+    return RenderedInputLine{
+        features::highlighting::render_highlighted_line(state, line),
+        render_utils::measure_display_width(line)};
+}
+
 std::string render_prompt_layout(const PromptLayout &layout) {
     if (layout.header_rendered.empty()) {
         return layout.input_prefix_rendered;
@@ -89,13 +107,14 @@ namespace {
 InputFrame build_input_frame(const shell::ShellState &state,
                              const std::string &line, size_t cursor,
                              const PromptLayout &layout,
-                             const std::string &prefix, size_t columns) {
-    const std::string rendered =
-        features::highlighting::render_highlighted_line(state, line);
+                             const std::string &prefix, size_t columns,
+                             const InputRenderState *cache_state) {
+    const RenderedInputLine rendered_line =
+        render_input_line(state, line, cache_state);
     const size_t clamped_cursor = cursor > line.size() ? line.size() : cursor;
-    const size_t line_display_width = render_utils::measure_display_width(line);
+    const size_t line_display_width = rendered_line.display_width;
     const size_t cursor_display_width =
-        render_utils::measure_display_width(line.substr(0, clamped_cursor));
+        render_utils::measure_display_width_prefix(line, clamped_cursor);
     const render_utils::CursorGeometry end =
         line.empty() ? render_utils::CursorGeometry{}
                      : render_utils::compute_render_end_geometry(
@@ -110,7 +129,7 @@ InputFrame build_input_frame(const shell::ShellState &state,
 
     InputFrame result;
     result.frame = prefix;
-    result.frame += rendered;
+    result.frame += rendered_line.text;
 
     if (right_prompt_visible) {
         append_input_right_prompt(result.frame, layout, columns);
@@ -123,6 +142,9 @@ InputFrame build_input_frame(const shell::ShellState &state,
     update_input_render_state(result.next_render_state, layout,
                               line_display_width, cursor_display_width,
                               columns);
+    result.next_render_state.cached_line_text = line;
+    result.next_render_state.cached_line_rendered = rendered_line.text;
+    result.next_render_state.cached_line_display_width = line_display_width;
     return result;
 }
 
@@ -133,7 +155,7 @@ InputFrame build_fresh_input_frame(const shell::ShellState &state,
     const size_t columns = render_utils::get_terminal_columns();
     const PromptLayout layout = prompt_template::build_layout(state);
     return build_input_frame(state, line, cursor, layout,
-                             render_prompt_layout(layout), columns);
+                             render_prompt_layout(layout), columns, nullptr);
 }
 
 InputFrame
@@ -152,8 +174,10 @@ build_redraw_input_frame(const InputRenderState &current_render_state,
     const std::string prefix = redraw_full_prompt
                                    ? render_prompt_layout(layout)
                                    : layout.input_prefix_rendered;
-    InputFrame result =
-        build_input_frame(state, line, cursor, layout, prefix, columns);
+    const InputRenderState *line_cache =
+        redraw_full_prompt ? nullptr : &current_render_state;
+    InputFrame result = build_input_frame(state, line, cursor, layout, prefix,
+                                          columns, line_cache);
 
     if (redraw_full_prompt) {
         if (terminal_resized) {

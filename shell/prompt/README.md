@@ -37,7 +37,7 @@ prompt.cpp
   Owns token value lookup and style token expansion.
 
 - `render_utils.*`
-  Owns ANSI-aware display-width measurement and prompt block geometry.
+  Owns ANSI-aware display-width measurement, prefix-width measurement, and prompt block geometry.
 
 ## Core Types
 
@@ -57,7 +57,7 @@ It stores:
 - `input_right_display_width`
   Display width of that right prompt.
 
-This split matters because the line editor only edits the last line. Completion menus and redraw clear logic need to know how many rows are above the editable line and how wide the prompt prefix is.
+This split matters because the line editor only edits the last line. Below-prompt panels and redraw clear logic need to know how many rows are above the editable line and how wide the prompt prefix is.
 
 ### `InputRenderState`
 
@@ -68,6 +68,7 @@ This split matters because the line editor only edits the last line. Completion 
 - the current cursor display width
 - the last terminal column count
 - whether the next redraw must rebuild the full prompt block
+- the cached highlighted line render and width for redraws where only the cursor moved
 
 `prompt.cpp` updates this state after every redraw so later clears and cursor restores can be computed without re-reading the screen.
 
@@ -79,7 +80,7 @@ The interactive prompt path is:
 2. `prompt_template::build_layout(...)` reads `PROMPT` and expands `%tokens`.
 3. `prompt.cpp` stores that `PromptLayout` inside `InputRenderState`.
 4. During editing, `input.cpp` asks `prompt.cpp` for redraw frames.
-5. `prompt.cpp` reuses or rebuilds the `PromptLayout`, renders the highlighted input line, and computes cursor geometry with `render_utils`.
+5. `prompt.cpp` reuses or rebuilds the `PromptLayout`, reuses the cached highlighted input line when the text is unchanged, and computes cursor geometry with `render_utils`.
 
 The prompt layer does not write directly to the terminal except through its public redraw helpers. `input.cpp` decides when full redraws happen.
 

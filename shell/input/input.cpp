@@ -12,13 +12,17 @@
 #include "../shell.hpp"
 #include "../signals/signals.hpp"
 #include "../terminal/terminal.hpp"
-#include "./completion_menu.hpp"
 #include "./editor_state/editor_state.hpp"
 #include "./key/key.hpp"
+#include "./panels/completion/completion_panel.hpp"
+#include "./panels/panel.hpp"
 #include "./session_state/session_state.hpp"
 
 namespace shell::input {
 namespace {
+
+namespace panels = shell::input::panels;
+namespace completion_panel = shell::input::panels::completion;
 
 enum class KeyHandlingResult {
     ContinueLoop,
@@ -49,7 +53,7 @@ struct InputContext {
     session_state::EditorSessionState &session;
     size_t history_size = 0;
     InputResult &result;
-    completion_menu::RenderState completion_menu_state;
+    panels::RenderState panel_state;
 };
 
 bool begin_input_session(InputSession &session) {
@@ -101,8 +105,27 @@ bool has_active_completion_selection(const InputContext &context) {
     return context.session.completion.active;
 }
 
-bool has_visible_completion_menu(const InputContext &context) {
-    return completion_menu::is_visible(context.completion_menu_state);
+bool has_active_panel(const InputContext &context) {
+    return session_state::active_transient_preview_kind(context.session) !=
+           session_state::TransientPreviewKind::None;
+}
+
+bool has_visible_panel(const InputContext &context) {
+    return panels::is_visible(context.panel_state);
+}
+
+panels::Block
+build_active_panel_block(const InputContext &context,
+                         const shell::prompt::InputRenderState &render_state) {
+    switch (session_state::active_transient_preview_kind(context.session)) {
+    case session_state::TransientPreviewKind::Completion:
+        return completion_panel::build_block(render_state,
+                                             context.session.completion);
+    case session_state::TransientPreviewKind::None:
+        break;
+    }
+
+    return {};
 }
 
 shell::prompt::InputFrame build_prompt_frame(const InputContext &context,
@@ -122,60 +145,62 @@ void redraw_buffer(InputContext &context, bool full_prompt = false) {
     write_prompt_frame(context, build_prompt_frame(context, full_prompt));
 }
 
-void redraw_with_completion_menu(InputContext &context,
-                                 bool full_prompt = false) {
+void redraw_with_active_panel(InputContext &context, bool full_prompt = false) {
     shell::prompt::InputFrame prompt_frame =
         build_prompt_frame(context, full_prompt);
 
     std::string frame = prompt_frame.frame;
-    if (has_active_completion_selection(context)) {
-        frame += completion_menu::build_render_frame(
-            prompt_frame.next_render_state, context.session.completion,
-            context.completion_menu_state);
-    } else if (has_visible_completion_menu(context)) {
-        frame += completion_menu::build_dismiss_frame(
-            prompt_frame.next_render_state, context.completion_menu_state);
+    if (has_active_panel(context)) {
+        frame += panels::build_render_frame(
+            prompt_frame.next_render_state,
+            build_active_panel_block(context, prompt_frame.next_render_state),
+            context.panel_state);
+    } else if (has_visible_panel(context)) {
+        frame += panels::build_dismiss_frame(prompt_frame.next_render_state,
+                                             context.panel_state);
     }
 
     write_terminal_frame(frame);
     context.render_state = std::move(prompt_frame.next_render_state);
 }
 
-void render_completion_menu(InputContext &context) {
-    write_terminal_frame(completion_menu::build_render_frame(
-        context.render_state, context.session.completion,
-        context.completion_menu_state));
+void render_active_panel(InputContext &context) {
+    write_terminal_frame(panels::build_render_frame(
+        context.render_state,
+        build_active_panel_block(context, context.render_state),
+        context.panel_state));
 }
 
-void dismiss_completion_menu(InputContext &context) {
-    write_terminal_frame(completion_menu::build_dismiss_frame(
-        context.render_state, context.completion_menu_state));
+void dismiss_visible_panel(InputContext &context) {
+    write_terminal_frame(
+        panels::build_dismiss_frame(context.render_state, context.panel_state));
 }
 
 void redraw_prompt_after_interrupt(InputContext &context) {
-    std::string frame = completion_menu::build_clear_prompt_and_menu_frame(
-        context.render_state, context.completion_menu_state);
+    std::string frame = panels::build_clear_prompt_and_panel_frame(
+        context.render_state, context.panel_state);
     frame += shell::prompt::build_prompt(context.state, context.render_state);
     write_terminal_frame(frame);
 }
 
 void redraw_after_resize(InputContext &context) {
-    if (!has_visible_completion_menu(context)) {
+    if (!has_visible_panel(context)) {
         redraw_buffer(context);
         return;
     }
 
-    context.completion_menu_state = {};
+    context.panel_state = {};
     std::string frame = "\033[2J\033[H";
     shell::prompt::InputFrame prompt_frame =
         shell::prompt::build_fresh_input_frame(
             context.state, context.buffer.text, context.buffer.cursor);
     frame += prompt_frame.frame;
 
-    if (has_active_completion_selection(context)) {
-        frame += completion_menu::build_render_frame(
-            prompt_frame.next_render_state, context.session.completion,
-            context.completion_menu_state);
+    if (has_active_panel(context)) {
+        frame += panels::build_render_frame(
+            prompt_frame.next_render_state,
+            build_active_panel_block(context, prompt_frame.next_render_state),
+            context.panel_state);
     }
 
     write_terminal_frame(frame);
@@ -208,13 +233,13 @@ std::string normalize_paste_for_single_line(const std::string &text) {
 
 void redraw_if_changed(InputContext &context, bool changed,
                        bool full_prompt = false) {
-    if (!changed && !(has_visible_completion_menu(context) &&
-                      !has_active_completion_selection(context))) {
+    if (!changed &&
+        !(has_visible_panel(context) && !has_active_panel(context))) {
         return;
     }
 
-    if (has_visible_completion_menu(context)) {
-        redraw_with_completion_menu(context, full_prompt);
+    if (has_visible_panel(context)) {
+        redraw_with_active_panel(context, full_prompt);
         return;
     }
 
@@ -282,15 +307,15 @@ void insert_pasted_input_text(InputContext &context, const std::string &text) {
                                    context.history_size, text));
 }
 
-void handle_completion_selection_escape(InputContext &context) {
-    const bool changed = session_state::cancel_completion_selection(
+void handle_active_preview_escape(InputContext &context) {
+    const bool changed = session_state::cancel_active_preview(
         context.session, context.buffer, context.history_size);
     if (changed) {
-        redraw_with_completion_menu(context);
+        redraw_with_active_panel(context);
         return;
     }
 
-    dismiss_completion_menu(context);
+    dismiss_visible_panel(context);
 }
 
 bool is_reverse_cycle_tab_event(const key::InputEvent &event) {
@@ -328,7 +353,7 @@ void handle_tab_completion(InputContext &context, bool reverse = false) {
         const bool changed = session_state::step_completion_selection(
             context.session, context.buffer, context.history_size, reverse);
         if (changed) {
-            redraw_with_completion_menu(context);
+            redraw_with_active_panel(context);
         }
         return;
     }
@@ -352,9 +377,9 @@ void handle_tab_completion(InputContext &context, bool reverse = false) {
             completion.replace_end, completion.candidates,
             completion.display_candidates);
         if (context.render_state.needs_full_redraw) {
-            redraw_with_completion_menu(context);
+            redraw_with_active_panel(context);
         } else {
-            render_completion_menu(context);
+            render_active_panel(context);
         }
         return;
     }
@@ -376,7 +401,7 @@ KeyHandlingResult handle_character_key(InputContext &context,
         case 'd':
             if (context.buffer.text.empty()) {
                 session_state::note_non_kill_command(context.session);
-                dismiss_completion_menu(context);
+                dismiss_visible_panel(context);
                 context.result.eof = true;
                 return KeyHandlingResult::FinishInput;
             }
@@ -392,7 +417,7 @@ KeyHandlingResult handle_character_key(InputContext &context,
             return KeyHandlingResult::ContinueLoop;
         case 'l':
             session_state::note_non_kill_command(context.session);
-            context.completion_menu_state = {};
+            context.panel_state = {};
             shell::terminal::write_stdout("\033[2J\033[H");
             redraw_buffer(context, true);
             return KeyHandlingResult::ContinueLoop;
@@ -465,11 +490,11 @@ KeyHandlingResult handle_special_key(InputContext &context,
         return KeyHandlingResult::Ignore;
     case key::EditorKey::Escape:
         session_state::note_non_kill_command(context.session);
-        dismiss_completion_menu(context);
+        dismiss_visible_panel(context);
         return KeyHandlingResult::ContinueLoop;
     case key::EditorKey::Enter:
         session_state::note_non_kill_command(context.session);
-        dismiss_completion_menu(context);
+        dismiss_visible_panel(context);
         shell::terminal::write_stdout_line("");
         return KeyHandlingResult::FinishInput;
     case key::EditorKey::Tab:
@@ -520,6 +545,58 @@ KeyHandlingResult handle_special_key(InputContext &context,
     }
 
     return KeyHandlingResult::Ignore;
+}
+
+bool is_key_event(const key::InputEvent &event, key::EditorKey key) {
+    return event.kind == key::InputEventKind::Key && event.key == key;
+}
+
+bool should_accept_active_preview_before_event(const key::InputEvent &event) {
+    if (event.kind == key::InputEventKind::Ignored ||
+        event.kind == key::InputEventKind::Resized) {
+        return false;
+    }
+
+    return !is_key_event(event, key::EditorKey::Tab);
+}
+
+bool handle_active_completion_mode(InputContext &context,
+                                   const key::InputEvent &event) {
+    if (is_key_event(event, key::EditorKey::Escape)) {
+        handle_active_preview_escape(context);
+        return true;
+    }
+
+    if (is_undo_event(event) || is_redo_event(event)) {
+        handle_active_preview_escape(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::Enter)) {
+        session_state::accept_active_preview(context.session, context.buffer,
+                                             context.history_size);
+        dismiss_visible_panel(context);
+        return true;
+    }
+
+    if (should_accept_active_preview_before_event(event)) {
+        session_state::accept_active_preview(context.session, context.buffer,
+                                             context.history_size);
+    }
+
+    return false;
+}
+
+bool handle_active_transient_mode(InputContext &context,
+                                  const key::InputEvent &event) {
+    switch (session_state::active_transient_preview_kind(context.session)) {
+    case session_state::TransientPreviewKind::Completion:
+        return handle_active_completion_mode(context, event);
+    case session_state::TransientPreviewKind::None:
+        break;
+    }
+
+    return false;
 }
 
 InputResult read_interactive_fallback_command_line() {
@@ -600,38 +677,8 @@ InputResult read_command_line(shell::ShellState &state,
             break;
         }
 
-        if (has_active_completion_selection(context)) {
-            if (event.kind == key::InputEventKind::Key &&
-                event.key == key::EditorKey::Escape) {
-                handle_completion_selection_escape(context);
-                continue;
-            }
-
-            if (is_undo_event(event)) {
-                handle_completion_selection_escape(context);
-                continue;
-            }
-
-            if (is_redo_event(event)) {
-                handle_completion_selection_escape(context);
-                continue;
-            }
-
-            if (event.kind == key::InputEventKind::Key &&
-                event.key == key::EditorKey::Enter) {
-                session_state::accept_completion_selection(session, buffer,
-                                                           history_size);
-                dismiss_completion_menu(context);
-                continue;
-            }
-
-            if (event.kind != key::InputEventKind::Ignored &&
-                !(event.kind == key::InputEventKind::Key &&
-                  event.key == key::EditorKey::Tab) &&
-                event.kind != key::InputEventKind::Resized) {
-                session_state::accept_completion_selection(session, buffer,
-                                                           history_size);
-            }
+        if (handle_active_transient_mode(context, event)) {
+            continue;
         }
 
         switch (event.kind) {

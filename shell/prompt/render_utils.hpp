@@ -23,6 +23,7 @@ struct RenderMetrics {
 size_t get_terminal_columns();
 size_t get_terminal_rows();
 size_t measure_display_width(const std::string &text);
+size_t measure_display_width_prefix(const std::string &text, size_t end);
 size_t measure_rendered_block_rows(const std::string &text, size_t columns);
 
 CursorGeometry compute_render_end_geometry(size_t base_column,
