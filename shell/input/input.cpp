@@ -51,7 +51,6 @@ struct InputContext {
     shell::prompt::InputRenderState &render_state;
     editor_state::LineBuffer &buffer;
     session_state::EditorSessionState &session;
-    size_t history_size = 0;
     InputResult &result;
     panels::RenderState panel_state;
 };
@@ -121,6 +120,7 @@ build_active_panel_block(const InputContext &context,
     case session_state::TransientPreviewKind::Completion:
         return completion_panel::build_block(render_state,
                                              context.session.completion);
+    case session_state::TransientPreviewKind::Search:
     case session_state::TransientPreviewKind::None:
         break;
     }
@@ -254,29 +254,26 @@ void apply_movement_and_redraw(InputContext &context,
 
 void apply_erase_and_redraw(InputContext &context,
                             editor_state::Erase erase_action) {
-    redraw_if_changed(context, session_state::apply_erase(
-                                   context.session, context.buffer,
-                                   context.history_size, erase_action));
+    redraw_if_changed(context,
+                      session_state::apply_erase(context.session,
+                                                 context.buffer, erase_action));
 }
 
 void apply_kill_and_redraw(InputContext &context,
                            editor_state::Kill kill_action) {
-    redraw_if_changed(
-        context, session_state::apply_kill(context.session, context.buffer,
-                                           context.history_size, kill_action)
-                     .changed);
+    redraw_if_changed(context, session_state::apply_kill(
+                                   context.session, context.buffer, kill_action)
+                                   .changed);
 }
 
 void yank_kill_buffer_and_redraw(InputContext &context) {
     redraw_if_changed(
-        context, session_state::yank_latest(context.session, context.buffer,
-                                            context.history_size));
+        context, session_state::yank_latest(context.session, context.buffer));
 }
 
 void yank_pop_and_redraw(InputContext &context) {
     redraw_if_changed(context,
-                      session_state::yank_pop(context.session, context.buffer,
-                                              context.history_size));
+                      session_state::yank_pop(context.session, context.buffer));
 }
 
 void apply_history_navigation_and_redraw(
@@ -289,27 +286,24 @@ void apply_history_navigation_and_redraw(
 void replace_range_and_redraw(InputContext &context, size_t replace_begin,
                               size_t replace_end,
                               const std::string &replacement) {
-    redraw_if_changed(context,
-                      session_state::replace_range(
-                          context.session, context.buffer, context.history_size,
-                          replace_begin, replace_end, replacement));
+    redraw_if_changed(context, session_state::replace_range(
+                                   context.session, context.buffer,
+                                   replace_begin, replace_end, replacement));
 }
 
 void insert_typed_input_text(InputContext &context, const std::string &text) {
     redraw_if_changed(context, session_state::insert_typed_text(
-                                   context.session, context.buffer,
-                                   context.history_size, text));
+                                   context.session, context.buffer, text));
 }
 
 void insert_pasted_input_text(InputContext &context, const std::string &text) {
     redraw_if_changed(context, session_state::insert_pasted_text(
-                                   context.session, context.buffer,
-                                   context.history_size, text));
+                                   context.session, context.buffer, text));
 }
 
 void handle_active_preview_escape(InputContext &context) {
-    const bool changed = session_state::cancel_active_preview(
-        context.session, context.buffer, context.history_size);
+    const bool changed =
+        session_state::cancel_active_preview(context.session, context.buffer);
     if (changed) {
         redraw_with_active_panel(context);
         return;
@@ -331,8 +325,7 @@ bool is_undo_event(const key::InputEvent &event) {
 
 void undo_and_redraw(InputContext &context) {
     redraw_if_changed(context,
-                      session_state::undo(context.session, context.buffer,
-                                          context.history_size));
+                      session_state::undo(context.session, context.buffer));
 }
 
 bool is_redo_event(const key::InputEvent &event) {
@@ -344,14 +337,13 @@ bool is_redo_event(const key::InputEvent &event) {
 
 void redo_and_redraw(InputContext &context) {
     redraw_if_changed(context,
-                      session_state::redo(context.session, context.buffer,
-                                          context.history_size));
+                      session_state::redo(context.session, context.buffer));
 }
 
 void handle_tab_completion(InputContext &context, bool reverse = false) {
     if (has_active_completion_selection(context)) {
         const bool changed = session_state::step_completion_selection(
-            context.session, context.buffer, context.history_size, reverse);
+            context.session, context.buffer, reverse);
         if (changed) {
             redraw_with_active_panel(context);
         }
@@ -573,15 +565,13 @@ bool handle_active_completion_mode(InputContext &context,
     }
 
     if (is_key_event(event, key::EditorKey::Enter)) {
-        session_state::accept_active_preview(context.session, context.buffer,
-                                             context.history_size);
+        session_state::accept_active_preview(context.session, context.buffer);
         dismiss_visible_panel(context);
         return true;
     }
 
     if (should_accept_active_preview_before_event(event)) {
-        session_state::accept_active_preview(context.session, context.buffer,
-                                             context.history_size);
+        session_state::accept_active_preview(context.session, context.buffer);
     }
 
     return false;
@@ -592,6 +582,7 @@ bool handle_active_transient_mode(InputContext &context,
     switch (session_state::active_transient_preview_kind(context.session)) {
     case session_state::TransientPreviewKind::Completion:
         return handle_active_completion_mode(context, event);
+    case session_state::TransientPreviewKind::Search:
     case session_state::TransientPreviewKind::None:
         break;
     }
@@ -652,10 +643,8 @@ InputResult read_command_line(shell::ShellState &state,
     InputResult result{};
     editor_state::LineBuffer buffer{};
     session_state::EditorSessionState session{};
-    const size_t history_size = state.history.size();
-    session_state::initialize_editor_session(session, history_size);
-    InputContext context{state,        render_state, buffer, session,
-                         history_size, result,       {}};
+    session_state::initialize_editor_session(session);
+    InputContext context{state, render_state, buffer, session, result, {}};
 
     InputSession input_session{};
     if (!begin_input_session(input_session)) {

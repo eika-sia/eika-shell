@@ -3,12 +3,12 @@
 namespace shell::input::session_state {
 namespace {
 
-void prepare_for_buffer_edit(EditorSessionState &session, size_t history_size) {
+void prepare_for_buffer_edit(EditorSessionState &session) {
     if (!session.history.active) {
         return;
     }
 
-    editor_state::reset_history_browse(session.history, history_size);
+    editor_state::reset_history_browse(session.history);
 }
 
 size_t latest_ring_index(const KillRingState &kill_ring) {
@@ -92,13 +92,13 @@ const std::string *rotate_yank(KillRingState &kill_ring) {
     return &entry;
 }
 
-void prepare_for_mutating_edit(EditorSessionState &session, size_t history_size,
+void prepare_for_mutating_edit(EditorSessionState &session,
                                bool should_invalidate_yank = true) {
     reset_kill_chain(session.kill_ring);
     if (should_invalidate_yank) {
         invalidate_yank(session.kill_ring);
     }
-    prepare_for_buffer_edit(session, history_size);
+    prepare_for_buffer_edit(session);
 }
 
 BufferSnapshot capture_snapshot(const editor_state::LineBuffer &buffer) {
@@ -124,10 +124,9 @@ void clear_transient_preview_states(EditorSessionState &session) {
     session.completion = {};
 }
 
-void reset_transient_state_for_restore(EditorSessionState &session,
-                                       size_t history_size) {
+void reset_transient_state_for_restore(EditorSessionState &session) {
     if (session.history.active)
-        editor_state::reset_history_browse(session.history, history_size);
+        editor_state::reset_history_browse(session.history);
 
     clear_transient_previews(session);
 
@@ -173,9 +172,8 @@ UndoGroupKind typed_insert_group_kind(const std::string &text) {
 
 } // namespace
 
-void initialize_editor_session(EditorSessionState &session,
-                               size_t history_size) {
-    session.history.index = history_size;
+void initialize_editor_session(EditorSessionState &session) {
+    session.history = {};
     session.undo = {};
 }
 
@@ -195,6 +193,10 @@ active_transient_preview_kind(const EditorSessionState &session) {
         return TransientPreviewKind::Completion;
     }
 
+    if (session.search.active) {
+        return TransientPreviewKind::Search;
+    }
+
     return TransientPreviewKind::None;
 }
 
@@ -203,13 +205,13 @@ void clear_transient_previews(EditorSessionState &session) {
 }
 
 bool insert_typed_text(EditorSessionState &session,
-                       editor_state::LineBuffer &buffer, size_t history_size,
+                       editor_state::LineBuffer &buffer,
                        const std::string &text) {
     if (text.empty())
         return false;
 
     BufferSnapshot before = capture_snapshot(buffer);
-    prepare_for_mutating_edit(session, history_size);
+    prepare_for_mutating_edit(session);
     bool changed = editor_state::insert_text(buffer, text);
 
     if (!changed)
@@ -221,14 +223,14 @@ bool insert_typed_text(EditorSessionState &session,
 }
 
 bool insert_pasted_text(EditorSessionState &session,
-                        editor_state::LineBuffer &buffer, size_t history_size,
+                        editor_state::LineBuffer &buffer,
                         const std::string &text) {
     if (text.empty())
         return false;
 
     note_non_kill_command(session);
     BufferSnapshot before = capture_snapshot(buffer);
-    prepare_for_mutating_edit(session, history_size);
+    prepare_for_mutating_edit(session);
     bool changed = editor_state::insert_text(buffer, text);
 
     if (!changed)
@@ -239,12 +241,11 @@ bool insert_pasted_text(EditorSessionState &session,
 }
 
 bool replace_range(EditorSessionState &session,
-                   editor_state::LineBuffer &buffer, size_t history_size,
-                   size_t replace_begin, size_t replace_end,
-                   const std::string &replacement) {
+                   editor_state::LineBuffer &buffer, size_t replace_begin,
+                   size_t replace_end, const std::string &replacement) {
     note_non_kill_command(session);
     BufferSnapshot before = capture_snapshot(buffer);
-    prepare_for_mutating_edit(session, history_size);
+    prepare_for_mutating_edit(session);
     bool changed = editor_state::replace_range(buffer, replace_begin,
                                                replace_end, replacement);
 
@@ -256,9 +257,9 @@ bool replace_range(EditorSessionState &session,
 }
 
 bool apply_erase(EditorSessionState &session, editor_state::LineBuffer &buffer,
-                 size_t history_size, editor_state::Erase erase_action) {
+                 editor_state::Erase erase_action) {
     BufferSnapshot before = capture_snapshot(buffer);
-    prepare_for_mutating_edit(session, history_size);
+    prepare_for_mutating_edit(session);
     UndoGroupKind chosen_group =
         erase_action == editor_state::Erase::BeforeCursor
             ? UndoGroupKind::Backspace
@@ -274,10 +275,9 @@ bool apply_erase(EditorSessionState &session, editor_state::LineBuffer &buffer,
 
 editor_state::KillResult apply_kill(EditorSessionState &session,
                                     editor_state::LineBuffer &buffer,
-                                    size_t history_size,
                                     editor_state::Kill kill_action) {
     BufferSnapshot before = capture_snapshot(buffer);
-    prepare_for_buffer_edit(session, history_size);
+    prepare_for_buffer_edit(session);
 
     const editor_state::KillResult result =
         editor_state::apply_kill(buffer, kill_action);
@@ -294,8 +294,8 @@ editor_state::KillResult apply_kill(EditorSessionState &session,
     return result;
 }
 
-bool yank_latest(EditorSessionState &session, editor_state::LineBuffer &buffer,
-                 size_t history_size) {
+bool yank_latest(EditorSessionState &session,
+                 editor_state::LineBuffer &buffer) {
     BufferSnapshot before = capture_snapshot(buffer);
     reset_kill_chain(session.kill_ring);
 
@@ -305,7 +305,7 @@ bool yank_latest(EditorSessionState &session, editor_state::LineBuffer &buffer,
         return false;
     }
 
-    prepare_for_buffer_edit(session, history_size);
+    prepare_for_buffer_edit(session);
     if (!editor_state::insert_text(buffer, *entry)) {
         invalidate_yank(session.kill_ring);
         return false;
@@ -315,8 +315,7 @@ bool yank_latest(EditorSessionState &session, editor_state::LineBuffer &buffer,
     return true;
 }
 
-bool yank_pop(EditorSessionState &session, editor_state::LineBuffer &buffer,
-              size_t history_size) {
+bool yank_pop(EditorSessionState &session, editor_state::LineBuffer &buffer) {
     BufferSnapshot before = capture_snapshot(buffer);
     reset_kill_chain(session.kill_ring);
 
@@ -327,7 +326,7 @@ bool yank_pop(EditorSessionState &session, editor_state::LineBuffer &buffer,
         return false;
     }
 
-    prepare_for_buffer_edit(session, history_size);
+    prepare_for_buffer_edit(session);
     if (!editor_state::replace_range(buffer, replace_begin, replace_end,
                                      *entry)) {
         invalidate_yank(session.kill_ring);
@@ -371,13 +370,12 @@ void begin_completion_selection(
 }
 
 bool step_completion_selection(EditorSessionState &session,
-                               editor_state::LineBuffer &buffer,
-                               size_t history_size, bool reverse) {
+                               editor_state::LineBuffer &buffer, bool reverse) {
     if (!session.completion.active || session.completion.candidates.empty())
         return false;
     note_non_kill_command(session);
 
-    prepare_for_buffer_edit(session, history_size);
+    prepare_for_buffer_edit(session);
 
     if (!session.completion.preview_active) {
         session.completion.preview_active = true;
@@ -407,13 +405,12 @@ bool step_completion_selection(EditorSessionState &session,
 }
 
 bool cancel_completion_selection(EditorSessionState &session,
-                                 editor_state::LineBuffer &buffer,
-                                 size_t history_size) {
+                                 editor_state::LineBuffer &buffer) {
     if (!session.completion.active)
         return false;
 
     if (session.completion.preview_active) {
-        prepare_for_buffer_edit(session, history_size);
+        prepare_for_buffer_edit(session);
         bool changed = restore_snapshot(buffer, session.completion.anchor);
         session.completion = {};
         return changed;
@@ -424,8 +421,7 @@ bool cancel_completion_selection(EditorSessionState &session,
 }
 
 bool accept_completion_selection(EditorSessionState &session,
-                                 editor_state::LineBuffer &buffer,
-                                 size_t history_size) {
+                                 editor_state::LineBuffer &buffer) {
     if (!session.completion.active) {
         return false;
     }
@@ -441,7 +437,7 @@ bool accept_completion_selection(EditorSessionState &session,
     reset_kill_chain(session.kill_ring);
     invalidate_yank(session.kill_ring);
     if (session.history.active) {
-        editor_state::reset_history_browse(session.history, history_size);
+        editor_state::reset_history_browse(session.history);
     }
 
     invalidate_redo(session.undo);
@@ -452,11 +448,11 @@ bool accept_completion_selection(EditorSessionState &session,
 }
 
 bool cancel_active_preview(EditorSessionState &session,
-                           editor_state::LineBuffer &buffer,
-                           size_t history_size) {
+                           editor_state::LineBuffer &buffer) {
     switch (active_transient_preview_kind(session)) {
     case TransientPreviewKind::Completion:
-        return cancel_completion_selection(session, buffer, history_size);
+        return cancel_completion_selection(session, buffer);
+    case TransientPreviewKind::Search:
     case TransientPreviewKind::None:
         break;
     }
@@ -465,11 +461,11 @@ bool cancel_active_preview(EditorSessionState &session,
 }
 
 bool accept_active_preview(EditorSessionState &session,
-                           editor_state::LineBuffer &buffer,
-                           size_t history_size) {
+                           editor_state::LineBuffer &buffer) {
     switch (active_transient_preview_kind(session)) {
     case TransientPreviewKind::Completion:
-        return accept_completion_selection(session, buffer, history_size);
+        return accept_completion_selection(session, buffer);
+    case TransientPreviewKind::Search:
     case TransientPreviewKind::None:
         break;
     }
@@ -477,8 +473,7 @@ bool accept_active_preview(EditorSessionState &session,
     return false;
 }
 
-bool undo(EditorSessionState &session, editor_state::LineBuffer &buffer,
-          size_t history_size) {
+bool undo(EditorSessionState &session, editor_state::LineBuffer &buffer) {
     if (session.undo.undo_stack.empty())
         return false;
 
@@ -487,13 +482,12 @@ bool undo(EditorSessionState &session, editor_state::LineBuffer &buffer,
     session.undo.undo_stack.pop_back();
     session.undo.redo_stack.push_back(current);
 
-    reset_transient_state_for_restore(session, history_size);
+    reset_transient_state_for_restore(session);
 
     return restore_snapshot(buffer, target);
 }
 
-bool redo(EditorSessionState &session, editor_state::LineBuffer &buffer,
-          size_t history_size) {
+bool redo(EditorSessionState &session, editor_state::LineBuffer &buffer) {
     if (session.undo.redo_stack.empty())
         return false;
 
@@ -502,7 +496,7 @@ bool redo(EditorSessionState &session, editor_state::LineBuffer &buffer,
     session.undo.redo_stack.pop_back();
     session.undo.undo_stack.push_back(current);
 
-    reset_transient_state_for_restore(session, history_size);
+    reset_transient_state_for_restore(session);
 
     return restore_snapshot(buffer, target);
 }

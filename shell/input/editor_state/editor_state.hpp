@@ -71,7 +71,6 @@ bool apply_history_navigation(LineBuffer &buffer, HistoryNavigation navigation,
                               const std::vector<std::string> &history,
                               HistoryBrowseState &history_state);
 
-void reset_history_browse(HistoryBrowseState &history_state,
-                          size_t history_size);
+void reset_history_browse(HistoryBrowseState &history_state);
 
 } // namespace shell::input::editor_state

@@ -40,10 +40,15 @@ struct CompletionSelectionState {
     size_t selected_index = 0;
 };
 
-enum class TransientPreviewKind {
-    None,
-    Completion,
+struct SearchState {
+    bool active = false;
+    BufferSnapshot anchor;
+    std::vector<std::string> candidates;
+    std::vector<features::CompletionDisplayCandidate> display_candidates;
+    size_t selected_index = 0;
 };
+
+enum class TransientPreviewKind { None, Completion, Search };
 
 enum UndoGroupKind {
     None,
@@ -65,43 +70,37 @@ struct EditorSessionState {
     editor_state::HistoryBrowseState history;
     KillRingState kill_ring;
     CompletionSelectionState completion;
+    SearchState search;
     UndoState undo;
 };
 
-void initialize_editor_session(EditorSessionState &session,
-                               size_t history_size);
+void initialize_editor_session(EditorSessionState &session);
 void note_non_kill_command(EditorSessionState &session,
                            bool invalidate_yank = true);
 TransientPreviewKind
 active_transient_preview_kind(const EditorSessionState &session);
 void clear_transient_previews(EditorSessionState &session);
 bool cancel_active_preview(EditorSessionState &session,
-                           editor_state::LineBuffer &buffer,
-                           size_t history_size);
+                           editor_state::LineBuffer &buffer);
 bool accept_active_preview(EditorSessionState &session,
-                           editor_state::LineBuffer &buffer,
-                           size_t history_size);
+                           editor_state::LineBuffer &buffer);
 
 bool insert_typed_text(EditorSessionState &session,
-                       editor_state::LineBuffer &buffer, size_t history_size,
+                       editor_state::LineBuffer &buffer,
                        const std::string &text);
 bool insert_pasted_text(EditorSessionState &session,
-                        editor_state::LineBuffer &buffer, size_t history_size,
+                        editor_state::LineBuffer &buffer,
                         const std::string &text);
 bool replace_range(EditorSessionState &session,
-                   editor_state::LineBuffer &buffer, size_t history_size,
-                   size_t replace_begin, size_t replace_end,
-                   const std::string &replacement);
+                   editor_state::LineBuffer &buffer, size_t replace_begin,
+                   size_t replace_end, const std::string &replacement);
 bool apply_erase(EditorSessionState &session, editor_state::LineBuffer &buffer,
-                 size_t history_size, editor_state::Erase erase_action);
+                 editor_state::Erase erase_action);
 editor_state::KillResult apply_kill(EditorSessionState &session,
                                     editor_state::LineBuffer &buffer,
-                                    size_t history_size,
                                     editor_state::Kill kill_action);
-bool yank_latest(EditorSessionState &session, editor_state::LineBuffer &buffer,
-                 size_t history_size);
-bool yank_pop(EditorSessionState &session, editor_state::LineBuffer &buffer,
-              size_t history_size);
+bool yank_latest(EditorSessionState &session, editor_state::LineBuffer &buffer);
+bool yank_pop(EditorSessionState &session, editor_state::LineBuffer &buffer);
 bool apply_history_navigation(EditorSessionState &session,
                               editor_state::LineBuffer &buffer,
                               editor_state::HistoryNavigation navigation,
@@ -114,17 +113,13 @@ void begin_completion_selection(
     std::vector<features::CompletionDisplayCandidate> display_candidates);
 bool step_completion_selection(EditorSessionState &session,
                                editor_state::LineBuffer &buffer,
-                               size_t history_size, bool reverse = false);
+                               bool reverse = false);
 bool cancel_completion_selection(EditorSessionState &session,
-                                 editor_state::LineBuffer &buffer,
-                                 size_t history_size);
+                                 editor_state::LineBuffer &buffer);
 bool accept_completion_selection(EditorSessionState &session,
-                                 editor_state::LineBuffer &buffer,
-                                 size_t history_size);
+                                 editor_state::LineBuffer &buffer);
 
-bool undo(EditorSessionState &session, editor_state::LineBuffer &,
-          size_t history_size);
-bool redo(EditorSessionState &session, editor_state::LineBuffer &,
-          size_t history_size);
+bool undo(EditorSessionState &session, editor_state::LineBuffer &);
+bool redo(EditorSessionState &session, editor_state::LineBuffer &);
 
 } // namespace shell::input::session_state

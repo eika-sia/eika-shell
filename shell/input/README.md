@@ -62,7 +62,7 @@ Key local types:
 - `InputSession`
   Owns the saved `termios` state and restores it on scope exit.
 - `InputContext`
-  Bundles the current shell state, prompt render state, editable buffer, per line session state, active panel render state, initial history size, and output `InputResult`.
+  Bundles the current shell state, prompt render state, editable buffer, per line session state, active panel render state, and output `InputResult`.
 
 The main loop does this:
 1. `key::read_event()` reads one semantic event.
@@ -301,9 +301,12 @@ Transient preview helpers:
 
 ### History Coupling
 
-When a real edit happens while history browsing is active, `session_state` resets history browse first. This is why insert/erase/replace helpers in `session_state` take `history_size`:
+When a real edit happens while history browsing is active, `session_state` resets history browse first:
 - the buffer layer stays pure
 - the session layer decides when browsing is invalidated
+- inactive history browse state is represented by `active == false`, not by a special one-past-end history index
+
+Only actual history navigation receives the history vector. It can derive any needed size from `history.size()`.
 
 ### Completion Selection Model
 

@@ -245,7 +245,7 @@ bool browse_history_down(LineBuffer &buffer,
         history_state.index = *next;
         buffer.text = history[history_state.index];
     } else {
-        reset_history_browse(history_state, history.size());
+        reset_history_browse(history_state);
         buffer.text = history_state.draft;
     }
 
@@ -393,10 +393,10 @@ bool apply_history_navigation(LineBuffer &buffer, HistoryNavigation navigation,
     return false;
 }
 
-void reset_history_browse(HistoryBrowseState &history_state,
-                          size_t history_size) {
+void reset_history_browse(HistoryBrowseState &history_state) {
     history_state.active = false;
-    history_state.index = history_size;
+    history_state.index = 0;
+    history_state.draft.clear();
 }
 
 } // namespace shell::input::editor_state
