@@ -16,13 +16,11 @@
 #include "./key/key.hpp"
 #include "./panels/completion/completion_panel.hpp"
 #include "./panels/panel.hpp"
+#include "./panels/search/search.hpp"
 #include "./session_state/session_state.hpp"
 
 namespace shell::input {
 namespace {
-
-namespace panels = shell::input::panels;
-namespace completion_panel = shell::input::panels::completion;
 
 enum class KeyHandlingResult {
     ContinueLoop,
@@ -118,9 +116,11 @@ build_active_panel_block(const InputContext &context,
                          const shell::prompt::InputRenderState &render_state) {
     switch (session_state::active_transient_preview_kind(context.session)) {
     case session_state::TransientPreviewKind::Completion:
-        return completion_panel::build_block(render_state,
-                                             context.session.completion);
+        return panels::completion::build_block(render_state,
+                                               context.session.completion);
     case session_state::TransientPreviewKind::Search:
+        return panels::search::build_block(render_state,
+                                           context.session.search);
     case session_state::TransientPreviewKind::None:
         break;
     }
@@ -146,6 +146,27 @@ void redraw_buffer(InputContext &context, bool full_prompt = false) {
 }
 
 void redraw_with_active_panel(InputContext &context, bool full_prompt = false) {
+    if (has_visible_panel(context)) {
+        std::string frame = panels::build_clear_prompt_and_panel_frame(
+            context.render_state, context.panel_state);
+        shell::prompt::InputFrame prompt_frame =
+            shell::prompt::build_fresh_input_frame(
+                context.state, context.buffer.text, context.buffer.cursor);
+
+        frame += prompt_frame.frame;
+        if (has_active_panel(context)) {
+            frame += panels::build_render_frame(
+                prompt_frame.next_render_state,
+                build_active_panel_block(context,
+                                         prompt_frame.next_render_state),
+                context.panel_state);
+        }
+
+        write_terminal_frame(frame);
+        context.render_state = std::move(prompt_frame.next_render_state);
+        return;
+    }
+
     shell::prompt::InputFrame prompt_frame =
         build_prompt_frame(context, full_prompt);
 
@@ -155,9 +176,6 @@ void redraw_with_active_panel(InputContext &context, bool full_prompt = false) {
             prompt_frame.next_render_state,
             build_active_panel_block(context, prompt_frame.next_render_state),
             context.panel_state);
-    } else if (has_visible_panel(context)) {
-        frame += panels::build_dismiss_frame(prompt_frame.next_render_state,
-                                             context.panel_state);
     }
 
     write_terminal_frame(frame);
@@ -377,6 +395,11 @@ void handle_tab_completion(InputContext &context, bool reverse = false) {
     }
 }
 
+void begin_search_and_redraw(InputContext &context) {
+    session_state::begin_search(context.session, context.buffer);
+    redraw_with_active_panel(context);
+}
+
 KeyHandlingResult handle_character_key(InputContext &context,
                                        const key::InputEvent &event) {
     if (event.key != key::EditorKey::Character) {
@@ -437,6 +460,9 @@ KeyHandlingResult handle_character_key(InputContext &context,
         case 'n':
             apply_history_navigation_and_redraw(
                 context, editor_state::HistoryNavigation::Down);
+            return KeyHandlingResult::ContinueLoop;
+        case 'r':
+            begin_search_and_redraw(context);
             return KeyHandlingResult::ContinueLoop;
         case 'z':
             undo_and_redraw(context);
@@ -577,12 +603,77 @@ bool handle_active_completion_mode(InputContext &context,
     return false;
 }
 
+bool handle_active_search_mode(InputContext &context,
+                               const key::InputEvent &event) {
+    if (event.kind == key::InputEventKind::TextInput) {
+        session_state::update_search_query(context.session, context.buffer,
+                                           context.state.history, event.text);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (event.kind == key::InputEventKind::Paste) {
+        session_state::update_search_query(
+            context.session, context.buffer, context.state.history,
+            normalize_paste_for_single_line(event.text));
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::ArrowDown)) {
+        session_state::step_search(context.session, context.buffer, false);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::ArrowUp)) {
+        session_state::step_search(context.session, context.buffer, true);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (event.kind == key::InputEventKind::Key &&
+        event.key == key::EditorKey::Backspace) {
+        session_state::erase_search_query(context.session, context.buffer,
+                                          context.state.history);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::Enter)) {
+        session_state::accept_search(context.session, context.buffer);
+        dismiss_visible_panel(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::Escape)) {
+        handle_active_preview_escape(context);
+        return true;
+    }
+
+    if (event.kind == key::InputEventKind::Key &&
+        event.key == key::EditorKey::Character && event.key_character == 'r' &&
+        event.modifiers == static_cast<unsigned>(key::KeyModCtrl)) {
+        session_state::step_search(context.session, context.buffer, false);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (is_undo_event(event) || is_redo_event(event)) {
+        handle_active_preview_escape(context);
+        return true;
+    }
+
+    return event.kind == key::InputEventKind::Key;
+}
+
 bool handle_active_transient_mode(InputContext &context,
                                   const key::InputEvent &event) {
     switch (session_state::active_transient_preview_kind(context.session)) {
     case session_state::TransientPreviewKind::Completion:
         return handle_active_completion_mode(context, event);
     case session_state::TransientPreviewKind::Search:
+        return handle_active_search_mode(context, event);
     case session_state::TransientPreviewKind::None:
         break;
     }

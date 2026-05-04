@@ -122,6 +122,7 @@ inline void close_undo_group(UndoState &undo_state) {
 
 void clear_transient_preview_states(EditorSessionState &session) {
     session.completion = {};
+    session.search = {};
 }
 
 void reset_transient_state_for_restore(EditorSessionState &session) {
@@ -161,6 +162,16 @@ bool completion_matches_anchor(const CompletionSelectionState &completion,
            buffer.cursor == anchor_cursor;
 }
 
+bool search_matches_anchor(const SearchState &search,
+                           const editor_state::LineBuffer &buffer) {
+    const size_t anchor_cursor =
+        search.anchor.cursor > search.anchor.text.size()
+            ? search.anchor.text.size()
+            : search.anchor.cursor;
+
+    return buffer.text == search.anchor.text && buffer.cursor == anchor_cursor;
+}
+
 bool is_typed_group_separator(const std::string &text) {
     return text.size() == 1 && (text[0] == ' ' || text[0] == '\t');
 }
@@ -168,6 +179,52 @@ bool is_typed_group_separator(const std::string &text) {
 UndoGroupKind typed_insert_group_kind(const std::string &text) {
     return is_typed_group_separator(text) ? UndoGroupKind::InsertBlank
                                           : UndoGroupKind::InsertText;
+}
+
+void add_search_candidate(SearchState &search, const std::string &candidate) {
+    if (!search.candidates.empty() && search.candidates.back() == candidate) {
+        return;
+    }
+
+    search.candidates.push_back(candidate);
+}
+
+bool refresh_search_results(SearchState &search,
+                            editor_state::LineBuffer &buffer,
+                            const std::vector<std::string> &history) {
+    search.candidates.clear();
+    search.selected_index = 0;
+
+    if (search.query.empty()) {
+        return restore_snapshot(buffer, search.anchor);
+    }
+
+    for (auto item = history.rbegin(); item != history.rend(); ++item) {
+        if (item->find(search.query) != std::string::npos) {
+            add_search_candidate(search, *item);
+        }
+    }
+
+    if (search.candidates.empty()) {
+        return restore_snapshot(buffer, search.anchor);
+    }
+
+    return restore_snapshot(
+        buffer,
+        BufferSnapshot{search.candidates[search.selected_index],
+                       search.candidates[search.selected_index].size()});
+}
+
+bool preview_search_candidate(SearchState &search,
+                              editor_state::LineBuffer &buffer) {
+    if (search.candidates.empty()) {
+        return restore_snapshot(buffer, search.anchor);
+    }
+
+    search.selected_index %= search.candidates.size();
+    const std::string &candidate = search.candidates[search.selected_index];
+    return restore_snapshot(buffer,
+                            BufferSnapshot{candidate, candidate.size()});
 }
 
 } // namespace
@@ -453,6 +510,7 @@ bool cancel_active_preview(EditorSessionState &session,
     case TransientPreviewKind::Completion:
         return cancel_completion_selection(session, buffer);
     case TransientPreviewKind::Search:
+        return cancel_search(session, buffer);
     case TransientPreviewKind::None:
         break;
     }
@@ -466,11 +524,106 @@ bool accept_active_preview(EditorSessionState &session,
     case TransientPreviewKind::Completion:
         return accept_completion_selection(session, buffer);
     case TransientPreviewKind::Search:
+        return accept_search(session, buffer);
     case TransientPreviewKind::None:
         break;
     }
 
     return false;
+}
+
+void begin_search(EditorSessionState &session,
+                  const editor_state::LineBuffer &buffer) {
+    note_non_kill_command(session);
+    clear_transient_preview_states(session);
+    prepare_for_buffer_edit(session);
+
+    session.search.active = true;
+    session.search.anchor = capture_snapshot(buffer);
+    session.search.query = "";
+    session.search.candidates = {};
+    session.search.selected_index = 0;
+}
+
+bool update_search_query(EditorSessionState &session,
+                         editor_state::LineBuffer &buffer,
+                         const std::vector<std::string> &history,
+                         const std::string &text) {
+    if (!session.search.active || text.empty()) {
+        return false;
+    }
+
+    session.search.query += text;
+    refresh_search_results(session.search, buffer, history);
+    return true;
+}
+
+bool erase_search_query(EditorSessionState &session,
+                        editor_state::LineBuffer &buffer,
+                        const std::vector<std::string> &history) {
+    if (!session.search.active || session.search.query.empty()) {
+        return false;
+    }
+
+    session.search.query.pop_back();
+    refresh_search_results(session.search, buffer, history);
+    return true;
+}
+
+bool step_search(EditorSessionState &session, editor_state::LineBuffer &buffer,
+                 bool reverse) {
+    if (!session.search.active || session.search.candidates.empty())
+        return false;
+    note_non_kill_command(session);
+
+    prepare_for_buffer_edit(session);
+
+    if (reverse) {
+        if (session.search.selected_index == 0) {
+            session.search.selected_index =
+                session.search.candidates.size() - 1;
+        } else {
+            --session.search.selected_index;
+        }
+    } else {
+        session.search.selected_index++;
+        session.search.selected_index %= session.search.candidates.size();
+    }
+
+    preview_search_candidate(session.search, buffer);
+    return true;
+}
+
+bool cancel_search(EditorSessionState &session,
+                   editor_state::LineBuffer &buffer) {
+    if (!session.search.active)
+        return false;
+
+    prepare_for_buffer_edit(session);
+    bool changed = restore_snapshot(buffer, session.search.anchor);
+    session.search = {};
+    return changed;
+}
+
+bool accept_search(EditorSessionState &session,
+                   editor_state::LineBuffer &buffer) {
+    if (!session.search.active)
+        return false;
+
+    close_undo_group(session.undo);
+
+    if (search_matches_anchor(session.search, buffer)) {
+        session.search = {};
+        return false;
+    }
+
+    reset_kill_chain(session.kill_ring);
+    invalidate_yank(session.kill_ring);
+    invalidate_redo(session.undo);
+    session.undo.undo_stack.push_back(session.search.anchor);
+
+    session.search = {};
+    return true;
 }
 
 bool undo(EditorSessionState &session, editor_state::LineBuffer &buffer) {

@@ -3,9 +3,10 @@
 - `input.cpp` main orchestration and dispatching
 - `panels/panel.cpp` generic cursor and frame helpers for panels rendered below the current prompt/input block
 - `panels/completion/completion_panel.cpp` builds the completion candidate panel block
+- `panels/search/search.cpp` builds the reverse history search panel block
 - `key/` converts input bytes to semantic actions (like pasted text, escape sequences)
 - `editor_state/` mutates the line buffer and history browse state
-- `session_state/` handles per-line interaction state such as the kill ring, active completion selection, and undo/redo history
+- `session_state/` handles per line interaction state such as the kill ring, active completion selection, reverse search, and undo/redo history
 
 ## High-Level Pipeline
 
@@ -25,11 +26,12 @@ key::read_event()
 input::read_command_line()
     |
     +-- editor_state: pure buffer/history mutations
-    +-- session_state: kill ring, yank-pop, history invalidation, completion selection, undo/redo snapshots
+    +-- session_state: kill ring, yank-pop, history invalidation, completion/search selection, undo/redo snapshots
     +-- completion: compute completion action
     +-- prompt: build redraw frames for the input block
     +-- panels: generic below-input panel frames
     +-- panels/completion: build candidate grid blocks for the panel renderer
+    +-- panels/search: build reverse-history search blocks for the panel renderer
     v
 InputResult { line, eof, interrupted }
 ```
@@ -85,6 +87,7 @@ The main loop does this:
 - mapping key bindings to editor actions
 - paste normalization for a single-line editor
 - calling completion and deciding whether to replace text or open a completion-selection session
+- routing reverse history search as a transient mode separate from normal line editing
 - deciding whether undo/redo should act on history or cancel an active transient preview first
 - deciding when prompt redraws should include panel show/update/dismiss work
 - deciding when input is finished
@@ -94,7 +97,7 @@ The main loop does this:
 - text buffer algorithms
 - kill ring internals
 - history browse internals
-- completion candidate layout or ANSI panel rendering
+- completion/search candidate layout or ANSI panel rendering
 
 ## `key/`: Terminal Byte Decoding
 
@@ -236,6 +239,7 @@ Current session state:
 - kill coalescing state
 - yank pop state
 - completion selection state
+- reverse history search state
 - undo stack
 - redo stack
 - current undo-group kind
@@ -267,6 +271,7 @@ Undo state currently stores full line snapshots:
 Undo/redo lives in `session_state` rather than `editor_state` because restoring a line also has to clear or reset other per-line interaction state:
 - history browse mode
 - completion selection preview state
+- reverse history search preview state
 - yank-pop validity
 - current undo-group boundaries
 
@@ -292,6 +297,17 @@ Current completion interaction rules:
 - `Esc` cancels preview and restores the anchor buffer without creating an undo step
 - accepting a preview creates one undo step back to the anchor buffer
 - if completion selection is active, `Ctrl+Z` and `Alt+Z` cancel the transient preview first instead of immediately walking undo/redo history
+
+Current reverse search interaction rules:
+- search query text is stored in `SearchState::query`, not in the main `LineBuffer`
+- the main `LineBuffer` only holds the selected history preview while search is active
+- `Ctrl+R` opens search and later cycles forward through matches while search is active
+- typed text and paste append to the search query
+- `Backspace` removes from the search query
+- `ArrowDown` cycles forward and `ArrowUp` cycles backward
+- `Enter` accepts the selected preview and keeps the accepted command in the editor
+- `Esc`, `Ctrl+Z`, and `Alt+Z` cancel search first and restore the anchor line
+- unhandled key events are consumed while search is active so normal editing cannot mutate the command buffer behind the search mode
 
 Transient preview helpers:
 - `active_transient_preview_kind(...)` reports which preview mode currently owns the input
@@ -327,6 +343,25 @@ Behavior:
 - ordinary edits, paste, erase, movement, and history navigation accept the preview first, then continue with that command
 - undo and redo are special: while completion selection is active they cancel the preview/panel first instead of touching snapshot history
 
+### Reverse Search Model
+
+`SearchState` stores:
+- whether search mode is active
+- the original anchor buffer text and cursor
+- the independent search query
+- newest first matching history candidates
+- the selected candidate index
+
+Behavior:
+- starting search saves the current command line as the anchor and opens an empty query
+- empty query renders the search prompt without replacing the command buffer
+- non empty query matches history by substring, newest entries first
+- consecutive duplicate matching commands are collapsed
+- the selected candidate is previewed into the main command buffer with the cursor at the end
+- no matches restore the anchor buffer and keep the search prompt visible
+- accepting search records one undo snapshot back to the anchor when the preview differs from the anchor
+- canceling search restores the anchor without creating undo history
+
 ## Completion in the Input Pipeline
 
 Completion lives in `features/completion`, but the input stack decides how to apply the result.
@@ -349,7 +384,7 @@ The prompt layer now exposes 2 useful levels:
 - `prompt::redraw_input_line(...)` for ordinary prompt-only redraws
 - `prompt::build_redraw_input_frame(...)` when `input.cpp` needs to batch a prompt redraw together with panel rendering into one terminal write
 
-That split matters because the completion panel sits below the prompt block. The prompt layer owns prompt geometry, while `panels/completion/completion_panel.cpp` owns completion layout relative to the prompt.
+That split matters because transient panels sit below the prompt block. The prompt layer owns prompt geometry, while panel specific files own candidate layout relative to the prompt.
 
 `panels/panel.cpp` owns:
 - moving from the live input cursor to the row below the rendered input
@@ -362,6 +397,14 @@ That split matters because the completion panel sits below the prompt block. The
 - candidate label styling and column layout
 - turning completion candidates into a generic below-prompt panel block
 - completion-specific styling such as directory coloring and selected reverse-video cells
+
+`panels/search/search.cpp` owns:
+- rendering the search query row
+- rendering matching history candidates in a capped, scrollable grid
+- displaying the selected candidate with reverse video styling
+- rendering the shared item-range footer when the result set is truncated
+
+When an active panel is already visible, `input.cpp` clears the old prompt and panel block and repaints the prompt and panel from fresh geometry. This matters for reverse search because previewing a shorter or longer history command can move the row where the below prompt panel starts.
 
 ## Current Binding Map
 
@@ -378,6 +421,7 @@ The bindings are intentionally implemented in `input.cpp`, not in `key/`.
 - `Ctrl+L` -> clear screen and redraw full prompt
 - `Ctrl+N` -> history down
 - `Ctrl+P` -> history up
+- `Ctrl+R` -> open reverse history search, or cycle forward while search is active
 - `Ctrl+U` -> kill to start of line
 - `Ctrl+W` -> kill previous word
 - `Ctrl+Y` -> yank latest kill
@@ -402,6 +446,14 @@ The bindings are intentionally implemented in `input.cpp`, not in `key/`.
 - `Tab` -> completion
 - `Shift+Tab` -> reverse completion cycling when completion selection is active
 - `Enter` -> finish line
+
+While reverse search is active:
+- text and paste edit the search query
+- `Backspace` edits the search query
+- `Ctrl+R` and `ArrowDown` cycle forward through matches
+- `ArrowUp` cycles backward through matches
+- `Enter` accepts the selected match and returns to normal editing
+- `Esc`, `Ctrl+Z`, and `Alt+Z` cancel search and restore the anchor line
 
 Current limitation:
 - literal `Ctrl+Shift+Z` redo is not available yet because the current control-byte decoder can represent `Ctrl+Z`, but not Shift on that same path
@@ -448,6 +500,10 @@ Use this rule set when adding features:
 - the change is about completion candidate layout or completion-specific panel styling
 - examples: column packing, selection highlighting, prettier candidate labels, completion-specific coloring
 
+### Add it to `panels/search/search.cpp` if...
+- the change is about reverse-search query or history candidate layout
+- examples: search prompt wording, selected match styling, history match row formatting, search specific footer behavior
+
 ### Add it to `panels/panel.cpp` if...
 - the change is generic to any UI panel that lives below the prompt/input block
 - examples: generic cursor restore rules, panel clearing, prompt-plus-panel redraw framing, shared truncation, panel row budgeting, viewport footer text
@@ -464,6 +520,7 @@ These are the constraints the current refactor is trying to preserve:
 3. `session_state/` owns kill/yank/history interaction rules.
 4. `panels/panel.cpp` owns generic below-prompt panel frames.
 5. `panels/completion/completion_panel.cpp` owns candidate-panel layout and completion-specific panel styling.
-6. `input.cpp` is allowed to decide bindings and redraw policy.
-7. Prompt state must stay explicit.
-8. Raw mode lifetime stays in `input.cpp` with the line-read loop.
+6. `panels/search/search.cpp` owns reverse-search panel layout and search-specific panel styling.
+7. `input.cpp` is allowed to decide bindings and redraw policy.
+8. Prompt state must stay explicit.
+9. Raw mode lifetime stays in `input.cpp` with the line-read loop.

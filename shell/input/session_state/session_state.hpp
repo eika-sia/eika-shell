@@ -43,8 +43,8 @@ struct CompletionSelectionState {
 struct SearchState {
     bool active = false;
     BufferSnapshot anchor;
+    std::string query;
     std::vector<std::string> candidates;
-    std::vector<features::CompletionDisplayCandidate> display_candidates;
     size_t selected_index = 0;
 };
 
@@ -118,6 +118,22 @@ bool cancel_completion_selection(EditorSessionState &session,
                                  editor_state::LineBuffer &buffer);
 bool accept_completion_selection(EditorSessionState &session,
                                  editor_state::LineBuffer &buffer);
+
+void begin_search(EditorSessionState &session,
+                  const editor_state::LineBuffer &buffer);
+bool update_search_query(EditorSessionState &session,
+                         editor_state::LineBuffer &buffer,
+                         const std::vector<std::string> &history,
+                         const std::string &text);
+bool erase_search_query(EditorSessionState &session,
+                        editor_state::LineBuffer &buffer,
+                        const std::vector<std::string> &history);
+bool step_search(EditorSessionState &session, editor_state::LineBuffer &buffer,
+                 bool reverse);
+bool cancel_search(EditorSessionState &session,
+                   editor_state::LineBuffer &buffer);
+bool accept_search(EditorSessionState &session,
+                   editor_state::LineBuffer &buffer);
 
 bool undo(EditorSessionState &session, editor_state::LineBuffer &);
 bool redo(EditorSessionState &session, editor_state::LineBuffer &);
