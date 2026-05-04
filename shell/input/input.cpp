@@ -207,8 +207,8 @@ void redraw_after_resize(InputContext &context) {
         return;
     }
 
-    context.panel_state = {};
-    std::string frame = "\033[2J\033[H";
+    std::string frame = panels::build_clear_prompt_and_panel_frame(
+        context.render_state, context.panel_state);
     shell::prompt::InputFrame prompt_frame =
         shell::prompt::build_fresh_input_frame(
             context.state, context.buffer.text, context.buffer.cursor);
