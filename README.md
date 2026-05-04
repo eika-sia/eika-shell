@@ -79,12 +79,24 @@ printf 'echo hello\npwd\n' | ./build/shell
 ### Interactive features
 
 - custom raw-mode input handling
-- arrow-key history navigation
-- left/right cursor movement
-- backspace and delete
-- tab completion for commands and paths
+- prefix aware arrow-key history navigation
+- reverse history search with `Ctrl+R`
+- left/right, word, home, and end cursor movement
+- backspace, delete, word delete, and line kill bindings
+- kill ring yank and yank-pop
+- undo with `Ctrl+Z` and redo with `Alt+Z`
+- bracketed paste handling
+- tab completion for commands and paths with selectable candidates
 - syntax highlighting
 - comment highlighting
+
+### Prompt features
+
+- configurable `PROMPT` and `RPROMPT` templates
+- prompt tokens for user, host, directory, status, git state, background jobs, and time
+- ANSI color/style prompt tokens
+- multiline prompts
+- powerline style prompt segment helpers
 
 ### Startup and persistence
 
