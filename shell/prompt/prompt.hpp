@@ -8,9 +8,41 @@ struct ShellState;
 
 namespace shell::prompt {
 
-std::string build_prompt(const shell::ShellState &state);
-void redraw_input_line(const shell::ShellState &state, const std::string &line,
+struct PromptLayout {
+    std::string header_rendered;
+    std::string input_prefix_rendered;
+    size_t prompt_prefix_display_width = 0;
+    std::string input_right_rendered;
+    size_t input_right_display_width = 0;
+};
+
+struct InputRenderState {
+    PromptLayout layout;
+    size_t input_display_width = 0;
+    size_t cursor_display_width = 0;
+    size_t terminal_columns = 80;
+    bool needs_full_redraw = false;
+    std::string cached_line_text;
+    std::string cached_line_rendered;
+    size_t cached_line_display_width = 0;
+};
+
+struct InputFrame {
+    std::string frame;
+    InputRenderState next_render_state;
+};
+
+std::string build_prompt(const shell::ShellState &state,
+                         InputRenderState &render_state);
+InputFrame build_fresh_input_frame(const shell::ShellState &state,
+                                   const std::string &line, size_t cursor);
+InputFrame
+build_redraw_input_frame(const InputRenderState &current_render_state,
+                         const shell::ShellState &state,
+                         const std::string &line, size_t cursor,
+                         bool full_prompt);
+void redraw_input_line(InputRenderState &render_state,
+                       const shell::ShellState &state, const std::string &line,
                        size_t cursor, bool full_prompt);
-void finalize_interrupted_input_line();
 
 } // namespace shell::prompt

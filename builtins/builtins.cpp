@@ -446,4 +446,15 @@ bool is_builtin_name(const std::string &name) {
     return find_builtin_spec(name) != nullptr;
 }
 
+std::vector<std::string> builtin_names() {
+    std::vector<std::string> names;
+    names.reserve(builtin_specs().size());
+
+    for (const BuiltinSpec &spec : builtin_specs()) {
+        names.push_back(std::string(spec.name));
+    }
+
+    return names;
+}
+
 } // namespace builtins

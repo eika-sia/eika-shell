@@ -1,32 +1,84 @@
 #include "input.hpp"
 
-#include <cerrno>
 #include <cstdio>
 #include <iostream>
 #include <string>
 #include <termios.h>
 #include <unistd.h>
-#include <vector>
+#include <utility>
 
 #include "../../features/completion/completion.hpp"
 #include "../prompt/prompt.hpp"
 #include "../shell.hpp"
+#include "../signals/signals.hpp"
+#include "../terminal/terminal.hpp"
+#include "./editor_state/editor_state.hpp"
+#include "./key/key.hpp"
+#include "./panels/completion/completion_panel.hpp"
+#include "./panels/panel.hpp"
+#include "./panels/search/search.hpp"
+#include "./session_state/session_state.hpp"
 
 namespace shell::input {
 namespace {
 
-// helper funckije za manual handling stvari (enable/disable jer zelimo da drugi
-// programi budu normalni)
-bool enable_input_mode(struct termios &old_state) {
-    if (tcgetattr(STDIN_FILENO, &old_state) == -1) {
+enum class KeyHandlingResult {
+    ContinueLoop,
+    FinishInput,
+    Ignore,
+};
+
+struct InputSession {
+    struct termios saved_state_{};
+    bool active = false;
+
+    ~InputSession() {
+        if (!active) {
+            return;
+        }
+
+        if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_state_) == -1) {
+            perror("tcsetattr");
+        }
+        active = false;
+    }
+};
+
+struct InputContext {
+    const shell::ShellState &state;
+    shell::prompt::InputRenderState &render_state;
+    editor_state::LineBuffer &buffer;
+    session_state::EditorSessionState &session;
+    InputResult &result;
+    panels::RenderState panel_state;
+};
+
+bool begin_input_session(InputSession &session) {
+    session.active = false;
+
+    if (tcgetattr(STDIN_FILENO, &session.saved_state_) == -1) {
         perror("tcgetattr");
         return false;
     }
 
-    struct termios raw = old_state;
+    key::set_backspace_byte(
+        static_cast<unsigned char>(session.saved_state_.c_cc[VERASE]));
 
-    raw.c_lflag &= ~ICANON;
-    raw.c_lflag &= ~ECHO;
+    struct termios raw = session.saved_state_;
+
+    raw.c_iflag &= ~(IXON | IXOFF | ICRNL | INLCR | IGNCR | BRKINT | INPCK |
+                     ISTRIP | PARMRK);
+
+    raw.c_lflag &= ~(ICANON | ECHO | ECHOE | ECHOK | ECHONL | IEXTEN);
+
+    raw.c_cflag |= CS8;
+
+#ifdef VQUIT
+    raw.c_cc[VQUIT] = _POSIX_VDISABLE;
+#endif
+#ifdef VSUSP
+    raw.c_cc[VSUSP] = _POSIX_VDISABLE;
+#endif
 
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
@@ -36,100 +88,628 @@ bool enable_input_mode(struct termios &old_state) {
         return false;
     }
 
+    session.active = true;
     return true;
 }
 
-void restore_input_mode(const struct termios &old_state) {
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_state) == -1) {
-        perror("tcsetattr");
+void write_terminal_frame(const std::string &frame) {
+    if (!frame.empty()) {
+        shell::terminal::write_stdout(frame);
     }
 }
 
-// \033 escape sequence parsing (za strelice je lagano samo pomoicemo cursor
-// (isto esc seq) lijevo desno)
-void handle_escape_sequence(const shell::ShellState &state, std::string &buf,
-                            size_t &cursor,
-                            const std::vector<std::string> &hist,
-                            size_t &hist_index, std::string &draft,
-                            bool &browsing_history) {
-    char seq[3];
-    if (read(STDIN_FILENO, &seq[0], 1) <= 0)
+bool has_active_completion_selection(const InputContext &context) {
+    return context.session.completion.active;
+}
+
+bool has_active_panel(const InputContext &context) {
+    return session_state::active_transient_preview_kind(context.session) !=
+           session_state::TransientPreviewKind::None;
+}
+
+bool has_visible_panel(const InputContext &context) {
+    return panels::is_visible(context.panel_state);
+}
+
+panels::Block
+build_active_panel_block(const InputContext &context,
+                         const shell::prompt::InputRenderState &render_state) {
+    switch (session_state::active_transient_preview_kind(context.session)) {
+    case session_state::TransientPreviewKind::Completion:
+        return panels::completion::build_block(render_state,
+                                               context.session.completion);
+    case session_state::TransientPreviewKind::Search:
+        return panels::search::build_block(render_state,
+                                           context.session.search);
+    case session_state::TransientPreviewKind::None:
+        break;
+    }
+
+    return {};
+}
+
+shell::prompt::InputFrame build_prompt_frame(const InputContext &context,
+                                             bool full_prompt = false) {
+    return shell::prompt::build_redraw_input_frame(
+        context.render_state, context.state, context.buffer.text,
+        context.buffer.cursor, full_prompt);
+}
+
+void write_prompt_frame(InputContext &context,
+                        shell::prompt::InputFrame frame) {
+    write_terminal_frame(frame.frame);
+    context.render_state = std::move(frame.next_render_state);
+}
+
+void redraw_buffer(InputContext &context, bool full_prompt = false) {
+    write_prompt_frame(context, build_prompt_frame(context, full_prompt));
+}
+
+void redraw_with_active_panel(InputContext &context, bool full_prompt = false) {
+    if (has_visible_panel(context)) {
+        std::string frame = panels::build_clear_prompt_and_panel_frame(
+            context.render_state, context.panel_state);
+        shell::prompt::InputFrame prompt_frame =
+            shell::prompt::build_fresh_input_frame(
+                context.state, context.buffer.text, context.buffer.cursor);
+
+        frame += prompt_frame.frame;
+        if (has_active_panel(context)) {
+            frame += panels::build_render_frame(
+                prompt_frame.next_render_state,
+                build_active_panel_block(context,
+                                         prompt_frame.next_render_state),
+                context.panel_state);
+        }
+
+        write_terminal_frame(frame);
+        context.render_state = std::move(prompt_frame.next_render_state);
         return;
-    if (read(STDIN_FILENO, &seq[1], 1) <= 0)
+    }
+
+    shell::prompt::InputFrame prompt_frame =
+        build_prompt_frame(context, full_prompt);
+
+    std::string frame = prompt_frame.frame;
+    if (has_active_panel(context)) {
+        frame += panels::build_render_frame(
+            prompt_frame.next_render_state,
+            build_active_panel_block(context, prompt_frame.next_render_state),
+            context.panel_state);
+    }
+
+    write_terminal_frame(frame);
+    context.render_state = std::move(prompt_frame.next_render_state);
+}
+
+void render_active_panel(InputContext &context) {
+    write_terminal_frame(panels::build_render_frame(
+        context.render_state,
+        build_active_panel_block(context, context.render_state),
+        context.panel_state));
+}
+
+void dismiss_visible_panel(InputContext &context) {
+    write_terminal_frame(
+        panels::build_dismiss_frame(context.render_state, context.panel_state));
+}
+
+void redraw_prompt_after_interrupt(InputContext &context) {
+    std::string frame = panels::build_clear_prompt_and_panel_frame(
+        context.render_state, context.panel_state);
+    frame += shell::prompt::build_prompt(context.state, context.render_state);
+    write_terminal_frame(frame);
+}
+
+void redraw_after_resize(InputContext &context) {
+    if (!has_visible_panel(context)) {
+        redraw_buffer(context);
         return;
-
-    if (seq[0] != '[') {
-        return;
     }
 
-    switch (seq[1]) {
-    case 'A': { // Up
-        if (hist.empty()) {
-            return;
-        }
+    std::string frame = panels::build_clear_prompt_and_panel_frame(
+        context.render_state, context.panel_state);
+    shell::prompt::InputFrame prompt_frame =
+        shell::prompt::build_fresh_input_frame(
+            context.state, context.buffer.text, context.buffer.cursor);
+    frame += prompt_frame.frame;
 
-        if (!browsing_history) {
-            draft = buf;
-            browsing_history = true;
-            hist_index = hist.size() - 1;
-        } else if (hist_index > 0) {
-            hist_index--;
-        }
-
-        buf = hist[hist_index];
-        cursor = buf.size();
-        shell::prompt::redraw_input_line(state, buf, cursor, false);
-        break;
+    if (has_active_panel(context)) {
+        frame += panels::build_render_frame(
+            prompt_frame.next_render_state,
+            build_active_panel_block(context, prompt_frame.next_render_state),
+            context.panel_state);
     }
 
-    case 'B': { // Down
-        if (!browsing_history) {
-            return;
-        }
+    write_terminal_frame(frame);
+    context.render_state = std::move(prompt_frame.next_render_state);
+}
 
-        if (hist_index + 1 < hist.size()) {
-            hist_index++;
-            buf = hist[hist_index];
-        } else {
-            browsing_history = false;
-            hist_index = hist.size();
-            buf = draft;
-        }
+std::string normalize_paste_for_single_line(const std::string &text) {
+    std::string normalized;
+    normalized.reserve(text.size());
 
-        cursor = buf.size();
-        shell::prompt::redraw_input_line(state, buf, cursor, false);
-        break;
-    }
-
-    case 'C': { // Right
-        if (cursor < buf.size()) {
-            cursor++;
-            shell::prompt::redraw_input_line(state, buf, cursor, false);
-        }
-        break;
-    }
-
-    case 'D': { // Left
-        if (cursor > 0) {
-            cursor--;
-            shell::prompt::redraw_input_line(state, buf, cursor, false);
-        }
-        break;
-    }
-    default:
-        break;
-    }
-
-    if (seq[1] == '3') {
-        if (read(STDIN_FILENO, &seq[2], 1) <= 0)
-            return;
-
-        if (seq[2] == '~') {
-            if (cursor < buf.size()) {
-                buf.erase(cursor, 1);
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
+    for (unsigned char ch : text) {
+        switch (ch) {
+        case '\r':
+        case '\n':
+        case '\t':
+        case '\v':
+        case '\f':
+            normalized.push_back(' ');
+            break;
+        default:
+            if (ch >= 32U && ch != 127U) {
+                normalized.push_back(static_cast<char>(ch));
             }
+            break;
         }
+    }
+
+    return normalized;
+}
+
+void redraw_if_changed(InputContext &context, bool changed,
+                       bool full_prompt = false) {
+    if (!changed &&
+        !(has_visible_panel(context) && !has_active_panel(context))) {
+        return;
+    }
+
+    if (has_visible_panel(context)) {
+        redraw_with_active_panel(context, full_prompt);
+        return;
+    }
+
+    redraw_buffer(context, full_prompt);
+}
+
+void apply_movement_and_redraw(InputContext &context,
+                               editor_state::Movement movement) {
+    redraw_if_changed(context,
+                      editor_state::apply_movement(context.buffer, movement));
+}
+
+void apply_erase_and_redraw(InputContext &context,
+                            editor_state::Erase erase_action) {
+    redraw_if_changed(context,
+                      session_state::apply_erase(context.session,
+                                                 context.buffer, erase_action));
+}
+
+void apply_kill_and_redraw(InputContext &context,
+                           editor_state::Kill kill_action) {
+    redraw_if_changed(context, session_state::apply_kill(
+                                   context.session, context.buffer, kill_action)
+                                   .changed);
+}
+
+void yank_kill_buffer_and_redraw(InputContext &context) {
+    redraw_if_changed(
+        context, session_state::yank_latest(context.session, context.buffer));
+}
+
+void yank_pop_and_redraw(InputContext &context) {
+    redraw_if_changed(context,
+                      session_state::yank_pop(context.session, context.buffer));
+}
+
+void apply_history_navigation_and_redraw(
+    InputContext &context, editor_state::HistoryNavigation navigation) {
+    redraw_if_changed(context, session_state::apply_history_navigation(
+                                   context.session, context.buffer, navigation,
+                                   context.state.history));
+}
+
+void replace_range_and_redraw(InputContext &context, size_t replace_begin,
+                              size_t replace_end,
+                              const std::string &replacement) {
+    redraw_if_changed(context, session_state::replace_range(
+                                   context.session, context.buffer,
+                                   replace_begin, replace_end, replacement));
+}
+
+void insert_typed_input_text(InputContext &context, const std::string &text) {
+    redraw_if_changed(context, session_state::insert_typed_text(
+                                   context.session, context.buffer, text));
+}
+
+void insert_pasted_input_text(InputContext &context, const std::string &text) {
+    redraw_if_changed(context, session_state::insert_pasted_text(
+                                   context.session, context.buffer, text));
+}
+
+void handle_active_preview_escape(InputContext &context) {
+    const bool changed =
+        session_state::cancel_active_preview(context.session, context.buffer);
+    if (changed) {
+        redraw_with_active_panel(context);
+        return;
+    }
+
+    dismiss_visible_panel(context);
+}
+
+bool is_reverse_cycle_tab_event(const key::InputEvent &event) {
+    return key::has_modifier(event, key::KeyModShift);
+}
+
+bool is_undo_event(const key::InputEvent &event) {
+    return event.kind == key::InputEventKind::Key &&
+           event.key == key::EditorKey::Character &&
+           event.key_character == 'z' &&
+           event.modifiers == static_cast<unsigned>(key::KeyModCtrl);
+}
+
+void undo_and_redraw(InputContext &context) {
+    redraw_if_changed(context,
+                      session_state::undo(context.session, context.buffer));
+}
+
+bool is_redo_event(const key::InputEvent &event) {
+    return event.kind == key::InputEventKind::Key &&
+           event.key == key::EditorKey::Character &&
+           event.key_character == 'z' &&
+           event.modifiers == static_cast<unsigned>(key::KeyModAlt);
+}
+
+void redo_and_redraw(InputContext &context) {
+    redraw_if_changed(context,
+                      session_state::redo(context.session, context.buffer));
+}
+
+void handle_tab_completion(InputContext &context, bool reverse = false) {
+    if (has_active_completion_selection(context)) {
+        const bool changed = session_state::step_completion_selection(
+            context.session, context.buffer, reverse);
+        if (changed) {
+            redraw_with_active_panel(context);
+        }
+        return;
+    }
+
+    const features::CompletionResult completion = features::complete_at_cursor(
+        context.state, context.buffer.text, context.buffer.cursor);
+
+    switch (completion.action) {
+    case features::CompletionAction::None:
+        session_state::note_non_kill_command(context.session);
+        return;
+    case features::CompletionAction::ReplaceToken:
+        replace_range_and_redraw(context, completion.replace_begin,
+                                 completion.replace_end,
+                                 completion.replacement);
+        return;
+    case features::CompletionAction::ShowCandidates:
+        session_state::note_non_kill_command(context.session);
+        session_state::begin_completion_selection(
+            context.session, context.buffer, completion.replace_begin,
+            completion.replace_end, completion.candidates,
+            completion.display_candidates);
+        if (context.render_state.needs_full_redraw) {
+            redraw_with_active_panel(context);
+        } else {
+            render_active_panel(context);
+        }
+        return;
+    }
+}
+
+void begin_search_and_redraw(InputContext &context) {
+    session_state::begin_search(context.session, context.buffer);
+    redraw_with_active_panel(context);
+}
+
+KeyHandlingResult handle_character_key(InputContext &context,
+                                       const key::InputEvent &event) {
+    if (event.key != key::EditorKey::Character) {
+        return KeyHandlingResult::Ignore;
+    }
+
+    const char binding = event.key_character;
+    if (key::has_modifier(event, key::KeyModCtrl)) {
+        switch (binding) {
+        case 'a':
+            session_state::note_non_kill_command(context.session);
+            apply_movement_and_redraw(context, editor_state::Movement::Home);
+            return KeyHandlingResult::ContinueLoop;
+        case 'd':
+            if (context.buffer.text.empty()) {
+                session_state::note_non_kill_command(context.session);
+                dismiss_visible_panel(context);
+                context.result.eof = true;
+                return KeyHandlingResult::FinishInput;
+            }
+
+            apply_erase_and_redraw(context, editor_state::Erase::AtCursor);
+            return KeyHandlingResult::ContinueLoop;
+        case 'e':
+            session_state::note_non_kill_command(context.session);
+            apply_movement_and_redraw(context, editor_state::Movement::End);
+            return KeyHandlingResult::ContinueLoop;
+        case 'k':
+            apply_kill_and_redraw(context, editor_state::Kill::ToLineEnd);
+            return KeyHandlingResult::ContinueLoop;
+        case 'l':
+            session_state::note_non_kill_command(context.session);
+            context.panel_state = {};
+            shell::terminal::write_stdout("\033[2J\033[H");
+            redraw_buffer(context, true);
+            return KeyHandlingResult::ContinueLoop;
+        case 'u':
+            apply_kill_and_redraw(context, editor_state::Kill::ToLineStart);
+            return KeyHandlingResult::ContinueLoop;
+        case 'w':
+            apply_kill_and_redraw(context, editor_state::Kill::WordLeft);
+            return KeyHandlingResult::ContinueLoop;
+        case 'y':
+            yank_kill_buffer_and_redraw(context);
+            return KeyHandlingResult::ContinueLoop;
+        case 'b':
+            session_state::note_non_kill_command(context.session);
+            apply_movement_and_redraw(context, editor_state::Movement::Left);
+            return KeyHandlingResult::ContinueLoop;
+        case 'f':
+            session_state::note_non_kill_command(context.session);
+            apply_movement_and_redraw(context, editor_state::Movement::Right);
+            return KeyHandlingResult::ContinueLoop;
+        case 'p':
+            apply_history_navigation_and_redraw(
+                context, editor_state::HistoryNavigation::Up);
+            return KeyHandlingResult::ContinueLoop;
+        case 'n':
+            apply_history_navigation_and_redraw(
+                context, editor_state::HistoryNavigation::Down);
+            return KeyHandlingResult::ContinueLoop;
+        case 'r':
+            begin_search_and_redraw(context);
+            return KeyHandlingResult::ContinueLoop;
+        case 'z':
+            undo_and_redraw(context);
+            return KeyHandlingResult::ContinueLoop;
+        default:
+            break;
+        }
+    }
+
+    if (key::has_modifier(event, key::KeyModAlt)) {
+        switch (binding) {
+        case 'b':
+            session_state::note_non_kill_command(context.session);
+            apply_movement_and_redraw(context,
+                                      editor_state::Movement::WordLeft);
+            return KeyHandlingResult::ContinueLoop;
+        case 'f':
+            session_state::note_non_kill_command(context.session);
+            apply_movement_and_redraw(context,
+                                      editor_state::Movement::WordRight);
+            return KeyHandlingResult::ContinueLoop;
+        case 'd':
+            apply_kill_and_redraw(context, editor_state::Kill::WordRight);
+            return KeyHandlingResult::ContinueLoop;
+        case 'y':
+            yank_pop_and_redraw(context);
+            return KeyHandlingResult::ContinueLoop;
+        case 'z':
+            redo_and_redraw(context);
+            return KeyHandlingResult::ContinueLoop;
+        default:
+            break;
+        }
+    }
+
+    return KeyHandlingResult::Ignore;
+}
+
+KeyHandlingResult handle_special_key(InputContext &context,
+                                     const key::InputEvent &event) {
+    switch (event.key) {
+    case key::EditorKey::Character:
+        return KeyHandlingResult::Ignore;
+    case key::EditorKey::Escape:
+        session_state::note_non_kill_command(context.session);
+        dismiss_visible_panel(context);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::Enter:
+        session_state::note_non_kill_command(context.session);
+        dismiss_visible_panel(context);
+        shell::terminal::write_stdout_line("");
+        return KeyHandlingResult::FinishInput;
+    case key::EditorKey::Tab:
+        handle_tab_completion(context, is_reverse_cycle_tab_event(event));
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::Backspace:
+        if (key::has_modifier(event, key::KeyModAlt) ||
+            key::has_modifier(event, key::KeyModCtrl)) {
+            apply_kill_and_redraw(context, editor_state::Kill::WordLeft);
+            return KeyHandlingResult::ContinueLoop;
+        }
+
+        apply_erase_and_redraw(context, editor_state::Erase::BeforeCursor);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::Delete:
+        apply_erase_and_redraw(context, editor_state::Erase::AtCursor);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::ArrowUp:
+        apply_history_navigation_and_redraw(
+            context, editor_state::HistoryNavigation::Up);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::ArrowDown:
+        apply_history_navigation_and_redraw(
+            context, editor_state::HistoryNavigation::Down);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::ArrowRight:
+        session_state::note_non_kill_command(context.session);
+        apply_movement_and_redraw(context,
+                                  key::has_modifier(event, key::KeyModCtrl)
+                                      ? editor_state::Movement::WordRight
+                                      : editor_state::Movement::Right);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::ArrowLeft:
+        session_state::note_non_kill_command(context.session);
+        apply_movement_and_redraw(context,
+                                  key::has_modifier(event, key::KeyModCtrl)
+                                      ? editor_state::Movement::WordLeft
+                                      : editor_state::Movement::Left);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::Home:
+        session_state::note_non_kill_command(context.session);
+        apply_movement_and_redraw(context, editor_state::Movement::Home);
+        return KeyHandlingResult::ContinueLoop;
+    case key::EditorKey::End:
+        session_state::note_non_kill_command(context.session);
+        apply_movement_and_redraw(context, editor_state::Movement::End);
+        return KeyHandlingResult::ContinueLoop;
+    }
+
+    return KeyHandlingResult::Ignore;
+}
+
+bool is_key_event(const key::InputEvent &event, key::EditorKey key) {
+    return event.kind == key::InputEventKind::Key && event.key == key;
+}
+
+bool should_accept_active_preview_before_event(const key::InputEvent &event) {
+    if (event.kind == key::InputEventKind::Ignored ||
+        event.kind == key::InputEventKind::Resized) {
+        return false;
+    }
+
+    return !is_key_event(event, key::EditorKey::Tab);
+}
+
+bool handle_active_completion_mode(InputContext &context,
+                                   const key::InputEvent &event) {
+    if (is_key_event(event, key::EditorKey::Escape)) {
+        handle_active_preview_escape(context);
+        return true;
+    }
+
+    if (is_undo_event(event) || is_redo_event(event)) {
+        handle_active_preview_escape(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::Enter)) {
+        session_state::accept_active_preview(context.session, context.buffer);
+        dismiss_visible_panel(context);
+        return true;
+    }
+
+    if (should_accept_active_preview_before_event(event)) {
+        session_state::accept_active_preview(context.session, context.buffer);
+    }
+
+    return false;
+}
+
+bool handle_active_search_mode(InputContext &context,
+                               const key::InputEvent &event) {
+    if (event.kind == key::InputEventKind::TextInput) {
+        session_state::update_search_query(context.session, context.buffer,
+                                           context.state.history, event.text);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (event.kind == key::InputEventKind::Paste) {
+        session_state::update_search_query(
+            context.session, context.buffer, context.state.history,
+            normalize_paste_for_single_line(event.text));
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::ArrowDown)) {
+        session_state::step_search(context.session, context.buffer, false);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::ArrowUp)) {
+        session_state::step_search(context.session, context.buffer, true);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (event.kind == key::InputEventKind::Key &&
+        event.key == key::EditorKey::Backspace) {
+        session_state::erase_search_query(context.session, context.buffer,
+                                          context.state.history);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::Enter)) {
+        session_state::accept_search(context.session, context.buffer);
+        dismiss_visible_panel(context);
+        return true;
+    }
+
+    if (is_key_event(event, key::EditorKey::Escape)) {
+        handle_active_preview_escape(context);
+        return true;
+    }
+
+    if (event.kind == key::InputEventKind::Key &&
+        event.key == key::EditorKey::Character && event.key_character == 'r' &&
+        event.modifiers == static_cast<unsigned>(key::KeyModCtrl)) {
+        session_state::step_search(context.session, context.buffer, false);
+        redraw_with_active_panel(context);
+        return true;
+    }
+
+    if (is_undo_event(event) || is_redo_event(event)) {
+        handle_active_preview_escape(context);
+        return true;
+    }
+
+    return event.kind == key::InputEventKind::Key;
+}
+
+bool handle_active_transient_mode(InputContext &context,
+                                  const key::InputEvent &event) {
+    switch (session_state::active_transient_preview_kind(context.session)) {
+    case session_state::TransientPreviewKind::Completion:
+        return handle_active_completion_mode(context, event);
+    case session_state::TransientPreviewKind::Search:
+        return handle_active_search_mode(context, event);
+    case session_state::TransientPreviewKind::None:
+        break;
+    }
+
+    return false;
+}
+
+InputResult read_interactive_fallback_command_line() {
+    InputResult result{};
+
+    while (true) {
+        if (std::getline(std::cin, result.line)) {
+            return result;
+        }
+
+        if (shell::signals::g_input_interrupted != 0) {
+            shell::signals::g_input_interrupted = 0;
+            std::cin.clear();
+            result.interrupted = true;
+            return result;
+        }
+
+        if (shell::signals::g_resize_pending != 0) {
+            shell::signals::g_resize_pending = 0;
+            std::cin.clear();
+            continue;
+        }
+
+        if (std::cin.eof()) {
+            result.eof = true;
+            return result;
+        }
+
+        std::cin.clear();
+        result.eof = true;
+        return result;
     }
 }
 
@@ -145,125 +725,78 @@ InputResult read_non_interactive_command_line() {
     return result;
 }
 
-InputResult read_command_line(shell::ShellState &state) {
+InputResult read_command_line(shell::ShellState &state,
+                              shell::prompt::InputRenderState &render_state) {
     if (!state.interactive) {
         return read_non_interactive_command_line();
     }
 
     InputResult result{};
-    std::string buf;
-    std::string draft;
+    editor_state::LineBuffer buffer{};
+    session_state::EditorSessionState session{};
+    session_state::initialize_editor_session(session);
+    InputContext context{state, render_state, buffer, session, result, {}};
 
-    char ch = '\0';
-    size_t cursor = 0;
-    size_t hist_index = state.history.size();
-    bool browsing_history = false;
-
-    struct termios old_state;
-    const bool input_mode_enabled = enable_input_mode(old_state);
+    InputSession input_session{};
+    if (!begin_input_session(input_session)) {
+        return read_interactive_fallback_command_line();
+    }
 
     while (true) {
-        ssize_t n = read(STDIN_FILENO, &ch, 1);
+        const key::InputEvent event = key::read_event();
 
-        if (n == 0) {
+        if (event.kind == key::InputEventKind::ReadEof) {
             result.eof = true;
             break;
         }
 
-        if (n < 0) {
-            if (errno == EINTR) {
-                shell::prompt::finalize_interrupted_input_line();
-                result.interrupted = true;
-                break;
-            }
-            continue;
-        }
-
-        if (ch == '\n' || ch == '\r') {
-            write(STDOUT_FILENO, "\n", 1);
+        if (event.kind == key::InputEventKind::Interrupted) {
+            redraw_prompt_after_interrupt(context);
+            result.interrupted = true;
+            result.prompt_rendered = true;
             break;
         }
 
-        if (ch == 4) { // Ctrl+D
-            if (buf.empty()) {
-                result.eof = true;
+        if (handle_active_transient_mode(context, event)) {
+            continue;
+        }
+
+        switch (event.kind) {
+        case key::InputEventKind::TextInput:
+            insert_typed_input_text(context, event.text);
+            continue;
+        case key::InputEventKind::Paste:
+            insert_pasted_input_text(
+                context, normalize_paste_for_single_line(event.text));
+            continue;
+        case key::InputEventKind::Key: {
+            KeyHandlingResult key_result = handle_character_key(context, event);
+            if (key_result == KeyHandlingResult::Ignore) {
+                key_result = handle_special_key(context, event);
+            }
+
+            switch (key_result) {
+            case KeyHandlingResult::ContinueLoop:
+            case KeyHandlingResult::Ignore:
+                continue;
+            case KeyHandlingResult::FinishInput:
                 break;
             }
-
-            if (cursor < buf.size()) {
-                if (browsing_history) {
-                    browsing_history = false;
-                    hist_index = state.history.size();
-                }
-
-                buf.erase(cursor, 1);
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
-            }
+            break;
+        }
+        case key::InputEventKind::Resized:
+            redraw_after_resize(context);
             continue;
-        }
-
-        if (ch == '\033') {
-            handle_escape_sequence(state, buf, cursor, state.history, hist_index,
-                                   draft, browsing_history);
+        case key::InputEventKind::Ignored:
             continue;
+        default:
+            break;
         }
 
-        if (ch == 1) { // Ctrl+A
-            if (cursor > 0) {
-                cursor = 0;
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
-            }
-            continue;
-        }
-        if (ch == 5) { // Ctrl+E
-            size_t right = buf.size() - cursor;
-            if (right > 0) {
-                cursor = buf.size();
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
-            }
-            continue;
-        }
-        if (ch == 12) { // Ctrl+L
-            const char *clear = "\033[2J\033[H";
-            write(STDOUT_FILENO, clear, 7);
-            shell::prompt::redraw_input_line(state, buf, cursor, true);
-            continue;
-        }
-
-        if (ch == '\t') {
-            features::handle_tab_completion(state, buf, cursor);
-            continue;
-        }
-
-        if (ch == '\b' || ch == 127) { // backspace
-            if (cursor > 0) {
-                if (browsing_history) {
-                    browsing_history = false;
-                    hist_index = state.history.size();
-                }
-
-                buf.erase(cursor - 1, 1);
-                cursor--;
-                shell::prompt::redraw_input_line(state, buf, cursor, false);
-            }
-            continue;
-        }
-
-        // normal character insert
-        if (browsing_history) {
-            browsing_history = false;
-            hist_index = state.history.size();
-        }
-
-        buf.insert(cursor, 1, ch);
-        cursor++;
-        shell::prompt::redraw_input_line(state, buf, cursor, false);
+        break;
     }
 
-    if (input_mode_enabled) {
-        restore_input_mode(old_state);
-    }
-    result.line = buf;
+    result.line = buffer.text;
     return result;
 }
 
