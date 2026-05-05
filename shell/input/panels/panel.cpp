@@ -87,6 +87,22 @@ move_from_cursor_to_panel_start(const prompt::InputRenderState &render_state,
     return frame;
 }
 
+std::string reserve_rows_below_input_end(size_t rows) {
+    if (rows == 0) {
+        return "";
+    }
+
+    std::string frame;
+    for (size_t i = 0; i < rows; ++i) {
+        frame += "\n";
+    }
+
+    frame += "\033[" + std::to_string(rows) + "A\r";
+    return frame;
+}
+
+std::string move_from_input_end_to_panel_start() { return "\033[1B\r"; }
+
 } // namespace
 
 bool is_visible(const RenderState &state) { return state.rows > 0; }
@@ -177,7 +193,14 @@ std::string build_render_frame(const prompt::InputRenderState &render_state,
     }
 
     const size_t columns = render_state.terminal_columns;
-    std::string frame = move_from_cursor_to_panel_start(render_state, columns);
+    const size_t rows_to_clear = std::max(panel_state.rows, block.rows);
+    std::string frame = move_from_cursor_to_input_end(render_state, columns);
+    frame += reserve_rows_below_input_end(block.rows);
+    frame += move_from_input_end_to_panel_start();
+
+    if (rows_to_clear > 0) {
+        frame += prompt::render_utils::clear_render_block(0, rows_to_clear);
+    }
 
     if (is_visible(panel_state)) {
         frame += prompt::render_utils::clear_render_block(0, panel_state.rows);
