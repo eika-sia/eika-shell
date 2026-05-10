@@ -24,6 +24,25 @@ Use the provided helper:
 ./make.sh -r   # release
 ```
 
+Install system-wide:
+
+```sh
+sudo ./install.sh
+```
+
+By default this installs the binary as `/usr/local/bin/esh`. To install as
+`/usr/bin/esh`, run:
+
+```sh
+sudo ./install.sh --system-bin
+```
+
+For a user-local binary install:
+
+```sh
+INSTALL_BIN="$HOME/.local/bin/esh" ./install.sh
+```
+
 ## Run
 
 Interactive shell:
@@ -115,15 +134,19 @@ printf 'echo hello\npwd\n' | ./build/shell
 
 ### Startup and persistence
 
-- `~/.eshrc` is sourced on interactive startup if it exists
-- `~/.eshrc_history` is loaded on interactive startup if it exists
-- interactive history is saved back to `~/.eshrc_history` on exit
+- `~/.config/esh/eshrc` is sourced on interactive startup if it exists
+- `~/.eshrc` is used as a fallback only when `~/.config/esh/eshrc` does not exist
+- `~/.local/share/esh/history` is loaded on interactive startup if it exists
+- `~/.eshrc_history` is used as a fallback when `~/.local/share/esh/history` does not exist
+- interactive history is saved back to `~/.local/share/esh/history` on exit
 - missing startup/history files are ignored silently
 
 ### Scripting and comments
 
 - `#` starts a comment outside quotes
 - `source file` runs in the current shell
+- `source ./file.esh` and `source /path/file.esh` load that exact path
+- `source name.esh` searches `~/.config/esh/scripts`, then `~/.local/share/esh/scripts`
 - `source`, `-c`, and script-file execution do not record inner commands into history
 - see [docs/language.md](docs/language.md) for the planned scripting language direction
 

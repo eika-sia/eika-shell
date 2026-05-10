@@ -1,13 +1,13 @@
 #include "history.hpp"
 
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <filesystem>
 #include <string>
 #include <vector>
 
-#include "../../builtins/env/env.hpp"
+#include "../../shell/config/config_paths.hpp"
 #include "../../shell/terminal/terminal.hpp"
 #include "../shell_text/shell_text.hpp"
 
@@ -26,16 +26,6 @@ enum class HistoryNumberParseResult {
     Error,
 };
 
-std::string resolve_history_path(const shell::ShellState &state) {
-    const shell::ShellVariable *home =
-        builtins::env::find_variable(state, "HOME");
-    if (home == nullptr || home->value.empty()) {
-        return "";
-    }
-
-    return home->value + "/.eshrc_history";
-}
-
 bool history_file_exists(const std::string &path) {
     if (path.empty()) {
         return false;
@@ -43,6 +33,20 @@ bool history_file_exists(const std::string &path) {
 
     std::error_code ec;
     return std::filesystem::is_regular_file(path, ec);
+}
+
+std::string resolve_history_path(const shell::ShellState &state) {
+    const std::string primary = shell::config::history_path(state);
+    if (history_file_exists(primary)) {
+        return primary;
+    }
+
+    const std::string legacy = shell::config::legacy_history_path(state);
+    if (history_file_exists(legacy)) {
+        return legacy;
+    }
+
+    return primary;
 }
 
 HistoryNumberParseResult parse_history_number(const std::string &line,
@@ -76,9 +80,9 @@ HistoryNumberParseResult parse_history_number(const std::string &line,
     return HistoryNumberParseResult::Parsed;
 }
 
-HistoryExpansionResult apply_history_reference(
-    const shell::ShellState &state, int num, size_t begin, size_t end,
-    shell_text::Replacement &replacement) {
+HistoryExpansionResult
+apply_history_reference(const shell::ShellState &state, int num, size_t begin,
+                        size_t end, shell_text::Replacement &replacement) {
     int index = -1;
     if (num > 0) {
         index = num - 1;
@@ -97,9 +101,9 @@ HistoryExpansionResult apply_history_reference(
     return HistoryExpansionResult::Applied;
 }
 
-HistoryExpansionResult parse_history_expansion(
-    const shell::ShellState &state, const std::string &line, size_t begin,
-    shell_text::Replacement &replacement) {
+HistoryExpansionResult
+parse_history_expansion(const shell::ShellState &state, const std::string &line,
+                        size_t begin, shell_text::Replacement &replacement) {
     if (begin + 1 >= line.size()) {
         return HistoryExpansionResult::NoMatch;
     }
@@ -184,7 +188,15 @@ void load_history_file(shell::ShellState &state, const std::string &path) {
     }
 }
 
-void save_history_file(const shell::ShellState &state, const std::string &path) {
+void save_history_file(const shell::ShellState &state,
+                       const std::string &path) {
+    const std::filesystem::path history_path(path);
+    const std::filesystem::path parent_path = history_path.parent_path();
+    if (!parent_path.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(parent_path, ec);
+    }
+
     std::ofstream file(path);
     if (!file.is_open()) {
         return;
@@ -207,8 +219,8 @@ void save_shell_history(const shell::ShellState &state) {
         return;
     }
 
-    const std::string path = resolve_history_path(state);
-    if (history_file_exists(path)) {
+    const std::string path = shell::config::history_path(state);
+    if (!path.empty()) {
         save_history_file(state, path);
     }
 }

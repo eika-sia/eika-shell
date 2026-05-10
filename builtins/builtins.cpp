@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "../features/completion/path_completion.hpp"
+#include "../shell/config/config_paths.hpp"
 #include "./alias/alias.hpp"
 #include "./env/env.hpp"
 
@@ -382,7 +383,7 @@ int run_help(shell::ShellState &, const parser::Command &cmd) {
         return 1;
     }
 
-    std::cout << "eika shell\n";
+    std::cout << "eika shell beta v1.2\n";
     std::cout << "builtins:\n";
     for (const BuiltinSpec &spec : builtin_specs()) {
         std::cout << "  " << spec.name << " - " << spec.summary << '\n';
@@ -400,7 +401,16 @@ int source_stream(shell::ShellState &state, std::istream &stream) {
 
 int source_file(shell::ShellState &state, const std::string &path,
                 bool silent_missing) {
-    std::ifstream file(path);
+    const std::string resolved_path =
+        shell::config::resolve_source_path(state, path);
+    if (resolved_path.empty()) {
+        if (!silent_missing) {
+            std::cerr << "source: " << path << ": not found\n";
+        }
+        return 1;
+    }
+
+    std::ifstream file(resolved_path);
     if (!file.is_open()) {
         if (!silent_missing) {
             perror(path.c_str());

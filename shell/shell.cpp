@@ -11,6 +11,7 @@
 #include "../features/expansion/expansion.hpp"
 #include "../features/history/history.hpp"
 #include "../parser/parser.hpp"
+#include "./config/config_paths.hpp"
 #include "./exec/exec.hpp"
 #include "signals/signals.hpp"
 #include "terminal/terminal.hpp"
@@ -96,13 +97,10 @@ void init_shell(ShellState &state) {
 
     features::load_shell_history(state);
 
-    const shell::ShellVariable *home =
-        builtins::env::find_variable(state, "HOME");
-    if (home == nullptr || home->value.empty()) {
-        return;
+    const std::string config_path = config::startup_config_path(state);
+    if (!config_path.empty()) {
+        builtins::source_file(state, config_path, true);
     }
-
-    builtins::source_file(state, home->value + "/.eshrc", true);
 }
 
 std::string trim(const std::string &source) {

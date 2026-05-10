@@ -318,16 +318,16 @@ end
 hook chdir log_dir
 ```
 
-Hook behavior is explicit:
+Hook behavior should be explicit:
 - Hooks run in the current shell process.
 - Hook failures don't undo the action that triggered them.
-- Hook order should is registration order.
+- Hook order should be registration order.
 
 ## Native Integration Scripts
 
-`esh` ship native integration scripts instead of trying to source scripts generated for other shells.
+`esh` should ship native integration scripts instead of trying to source scripts generated for other shells.
 
-Found at locations:
+Repository examples can live in:
 ```text
 scripts/
     zoxide.esh
@@ -335,9 +335,10 @@ scripts/
     fzf.esh
 ```
 
-Installed locations:
+User-loadable scripts are searched from:
 ```text
 ~/.config/esh/scripts
+~/.local/share/esh/scripts
 ```
 
 Then users can write:
