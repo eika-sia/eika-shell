@@ -10,6 +10,8 @@ Small Unix-like shell written in C++.
   Detailed notes on prompt templates, prompt tokens, right prompts, multiline prompt geometry, and redraw behavior.
 - [Language design](docs/language.md)
   Design-roadmap notes for the future esh scripting language, parser direction, hooks, and native integration scripts.
+- [Changelog](docs/changelog.md)
+  Version history for the v1.0.0 baseline, v1.1.x UX/install work, and planned v1.2.0 scripting foundation.
 
 ## Build
 
