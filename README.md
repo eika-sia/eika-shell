@@ -2,6 +2,15 @@
 
 Small Unix-like shell written in C++.
 
+## Documentation
+
+- [Input stack](docs/input.md)
+  Detailed notes on raw input, key decoding, editor state, undo/redo, completion panels, and reverse history search.
+- [Prompt system](docs/prompt.md)
+  Detailed notes on prompt templates, prompt tokens, right prompts, multiline prompt geometry, and redraw behavior.
+- [Language design](docs/language.md)
+  Design-roadmap notes for the future esh scripting language, parser direction, hooks, and native integration scripts.
+
 ## Build
 
 ### Requirements
@@ -93,6 +102,7 @@ printf 'echo hello\npwd\n' | ./build/shell
 - tab completion for commands and paths with selectable candidates
 - syntax highlighting
 - comment highlighting
+- see [docs/input.md](docs/input.md) for the detailed input architecture
 
 ### Prompt features
 
@@ -101,6 +111,7 @@ printf 'echo hello\npwd\n' | ./build/shell
 - ANSI color/style prompt tokens
 - multiline prompts
 - powerline style prompt segment helpers
+- see [docs/prompt.md](docs/prompt.md) for prompt template and redraw details
 
 ### Startup and persistence
 
@@ -114,6 +125,7 @@ printf 'echo hello\npwd\n' | ./build/shell
 - `#` starts a comment outside quotes
 - `source file` runs in the current shell
 - `source`, `-c`, and script-file execution do not record inner commands into history
+- see [docs/language.md](docs/language.md) for the planned scripting language direction
 
 ## Current Semantics
 
