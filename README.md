@@ -2,6 +2,17 @@
 
 Small Unix-like shell written in C++.
 
+## Documentation
+
+- [Input stack](docs/input.md)
+  Detailed notes on raw input, key decoding, editor state, undo/redo, completion panels, and reverse history search.
+- [Prompt system](docs/prompt.md)
+  Detailed notes on prompt templates, prompt tokens, right prompts, multiline prompt geometry, and redraw behavior.
+- [Language design](docs/language.md)
+  Design-roadmap notes for the future esh scripting language, parser direction, hooks, and native integration scripts.
+- [Changelog](docs/changelog.md)
+  Version history for the v1.0.0 baseline, v1.1.x UX/install work, and planned v1.2.0 scripting foundation.
+
 ## Build
 
 ### Requirements
@@ -13,6 +24,25 @@ Use the provided helper:
 ```sh
 ./make.sh      # debug
 ./make.sh -r   # release
+```
+
+Install system-wide:
+
+```sh
+sudo ./install.sh
+```
+
+By default this installs the binary as `/usr/local/bin/esh`. To install as
+`/usr/bin/esh`, run:
+
+```sh
+sudo ./install.sh --system-bin
+```
+
+For a user-local binary install:
+
+```sh
+INSTALL_BIN="$HOME/.local/bin/esh" ./install.sh
 ```
 
 ## Run
@@ -93,6 +123,7 @@ printf 'echo hello\npwd\n' | ./build/shell
 - tab completion for commands and paths with selectable candidates
 - syntax highlighting
 - comment highlighting
+- see [docs/input.md](docs/input.md) for the detailed input architecture
 
 ### Prompt features
 
@@ -101,19 +132,25 @@ printf 'echo hello\npwd\n' | ./build/shell
 - ANSI color/style prompt tokens
 - multiline prompts
 - powerline style prompt segment helpers
+- see [docs/prompt.md](docs/prompt.md) for prompt template and redraw details
 
 ### Startup and persistence
 
-- `~/.eshrc` is sourced on interactive startup if it exists
-- `~/.eshrc_history` is loaded on interactive startup if it exists
-- interactive history is saved back to `~/.eshrc_history` on exit
+- `~/.config/esh/eshrc` is sourced on interactive startup if it exists
+- `~/.eshrc` is used as a fallback only when `~/.config/esh/eshrc` does not exist
+- `~/.local/share/esh/history` is loaded on interactive startup if it exists
+- `~/.eshrc_history` is used as a fallback when `~/.local/share/esh/history` does not exist
+- interactive history is saved back to `~/.local/share/esh/history` on exit
 - missing startup/history files are ignored silently
 
 ### Scripting and comments
 
 - `#` starts a comment outside quotes
 - `source file` runs in the current shell
+- `source ./file.esh` and `source /path/file.esh` load that exact path
+- `source name.esh` searches `~/.config/esh/scripts`, then `~/.local/share/esh/scripts`
 - `source`, `-c`, and script-file execution do not record inner commands into history
+- see [docs/language.md](docs/language.md) for the planned scripting language direction
 
 ## Current Semantics
 
