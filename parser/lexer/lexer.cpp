@@ -1,5 +1,5 @@
 #include "lexer.hpp"
-#include "assignments/assignment.hpp"
+#include "../assignments/assignment.hpp"
 
 #include <string>
 #include <utility>
@@ -36,6 +36,7 @@ bool should_consume_backslash_escape(char c, bool in_double_quote) {
     case ')':
     case '[':
     case ']':
+    case ',':
     case '=':
     case '\n':
         return true;
@@ -221,7 +222,7 @@ LexResult lex(const std::string &source, LexMode mode) {
 
         if (!in_single_quote && !in_double_quote &&
             (c == '<' || c == '>' || c == '|' || c == '&' || c == ';' ||
-             c == '(' || c == ')' || c == '[' || c == ']')) {
+             c == '(' || c == ')' || c == '[' || c == ']' || c == ',')) {
             flush_word(result.tokens, current, source, current_start,
                        current_end, command_context, expecting_redirect_target);
 
@@ -300,6 +301,12 @@ LexResult lex(const std::string &source, LexMode mode) {
                                                    SourceSpan{i, i + 1}));
                 mark_command_word_seen_if_needed(command_context,
                                                  expecting_redirect_target);
+                continue;
+            }
+
+            if (c == ',') {
+                result.tokens.push_back(make_token(
+                    TokenKind::Comma, ",", source, SourceSpan{i, i + 1}));
                 continue;
             }
 

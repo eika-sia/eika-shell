@@ -34,6 +34,8 @@ SourceLocation source_location_for_offset(const std::string &source,
 
 void add_error(std::vector<Diagnostic> &diagnostics, SourceSpan span,
                std::string message);
+void add_warning(std::vector<Diagnostic> &diagnostics, SourceSpan span,
+                 std::string message);
 
 void print_diagnostics(const std::string &source,
                        const std::vector<Diagnostic> &diagnostics);

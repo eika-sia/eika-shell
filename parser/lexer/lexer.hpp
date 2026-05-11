@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "diagnostics.hpp"
+#include "../diagnostics/diagnostics.hpp"
 
 namespace parser {
 
@@ -23,7 +23,7 @@ enum class TokenKind {
     RightParen,
     LeftBracket,
     RightBracket,
-    Equals,
+    Comma,
     EndOfFile,
 };
 

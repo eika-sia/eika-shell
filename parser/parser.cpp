@@ -1,226 +1,205 @@
-#include "internals/internal.hpp"
-#include "lexer.hpp"
+#include "parser.hpp"
 
-#include <initializer_list>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
+
+#include "ast.hpp"
+#include "parser2.hpp"
 
 namespace parser {
 namespace {
 
-bool is_one_of(TokenKind kind, std::initializer_list<TokenKind> disallowed) {
-    for (TokenKind blocked : disallowed) {
-        if (kind == blocked) {
-            return true;
+std::string source_slice(const std::string &source, SourceSpan span) {
+    if (span.start > source.size()) {
+        return "";
+    }
+
+    const size_t end = std::min(span.end, source.size());
+    if (end < span.start) {
+        return "";
+    }
+
+    return source.substr(span.start, end - span.start);
+}
+
+Command lower_simple_command(
+    const ast::SimpleCommand &simple, const std::string &source,
+    const std::vector<diagnostics::Diagnostic> &diagnostics, bool parse_ok) {
+    Command command{};
+    command.raw = source_slice(source, simple.span);
+    command.valid = parse_ok;
+
+    if (!parse_ok) {
+        command.diagnostics = diagnostics;
+    }
+
+    if (simple.invocation) {
+        for (const ast::Word &word : simple.invocation->words) {
+            command.args.push_back(word.text);
         }
     }
 
-    return false;
-}
+    for (const ast::Assignment &assignment : simple.assignments) {
+        command.assignments.push_back(
+            Assignment{assignment.name.text, assignment.value.text});
+    }
 
-bool reject_tokens(const std::vector<Token> &tokens,
-                   std::initializer_list<TokenKind> disallowed,
-                   std::vector<diagnostics::Diagnostic> &diagnostics) {
-    for (const Token &token : tokens) {
-        if (is_one_of(token.kind, disallowed)) {
-            diagnostics::add_error(diagnostics, token.span,
-                                   "syntax error: unexpected token " +
-                                       token.text);
-            return false;
+    // The old AST stores only one input and one output redirect. Preserve the
+    // practical shell-like behavior: the last redirect of each class wins.
+    for (const ast::Redirect &redirect : simple.redirects) {
+        switch (redirect.kind) {
+        case ast::RedirectKind::Input:
+            command.input_file = redirect.target.text;
+            break;
+        case ast::RedirectKind::Output:
+            command.output_file = redirect.target.text;
+            command.append_output = false;
+            break;
+        case ast::RedirectKind::AppendOutput:
+            command.output_file = redirect.target.text;
+            command.append_output = true;
+            break;
         }
     }
 
-    return true;
-}
-
-bool parse_command_tokens_checked(
-    const std::vector<Token> &tokens, const std::string &source, Command &cmd,
-    std::vector<diagnostics::Diagnostic> &diagnostics) {
-    if (!reject_tokens(tokens,
-                       {TokenKind::Pipe, TokenKind::AndIf, TokenKind::OrIf,
-                        TokenKind::Semicolon, TokenKind::Newline,
-                        TokenKind::Background, TokenKind::EndOfFile},
-                       diagnostics)) {
-        return false;
+    if (simple.invocation && !simple.invocation->words.empty()) {
+        const ast::Word &name = simple.invocation->words.front();
+        command.command_name_offset = name.span.start;
+        command.command_name_length = name.span.end - name.span.start;
     }
 
-    return parse_simple_command(tokens, source, cmd, diagnostics);
+    return command;
 }
 
-bool parse_pipeline_tokens_checked(
-    const std::vector<Token> &tokens, const std::string &source, Pipeline &pipe,
-    std::vector<diagnostics::Diagnostic> &diagnostics) {
-    if (!reject_tokens(tokens,
-                       {TokenKind::AndIf, TokenKind::OrIf,
-                        TokenKind::Semicolon, TokenKind::Newline,
-                        TokenKind::Background, TokenKind::EndOfFile},
-                       diagnostics)) {
-        return false;
+ConditionalChain
+lower_command_chain(const ast::CommandChain &chain, const std::string &source,
+                    const std::vector<diagnostics::Diagnostic> &diagnostics,
+                    bool parse_ok) {
+    ConditionalChain lowered{};
+    lowered.background = chain.background;
+    lowered.valid = parse_ok;
+
+    if (!parse_ok) {
+        lowered.diagnostics = diagnostics;
     }
 
-    return parse_pipeline_tokens(tokens, source, pipe, diagnostics);
-}
-
-bool parse_conditional_tokens_checked(
-    const std::vector<Token> &tokens, const std::string &source,
-    ConditionalChain &chain,
-    std::vector<diagnostics::Diagnostic> &diagnostics) {
-    if (!reject_tokens(tokens,
-                       {TokenKind::Semicolon, TokenKind::Newline,
-                        TokenKind::Background, TokenKind::EndOfFile},
-                       diagnostics)) {
-        return false;
-    }
-
-    return parse_and_or_tokens(tokens, source, chain, diagnostics);
-}
-
-bool parse_command_line_tokens(
-    const std::vector<Token> &tokens, const std::string &source,
-    CommandList &list, std::vector<diagnostics::Diagnostic> &diagnostics) {
-    // `;` and `&` split toplevel chains
-    // `&&` and `||` stay inside one chain and are parsed one level down.
-    std::vector<Token> current_chain_tokens;
-    for (size_t i = 0; i < tokens.size(); ++i) {
-        const Token &token = tokens[i];
-
-        if (token.kind == TokenKind::EndOfFile) {
+    for (const ast::ConditionalPipeline &conditional : chain.pipelines) {
+        Pipeline pipeline{};
+        pipeline.valid = parse_ok;
+        switch (conditional.condition) {
+        case ast::ChainCondition::Always:
+            pipeline.run_condition = RunCondition::Always;
+            break;
+        case ast::ChainCondition::IfPreviousSucceeded:
+            pipeline.run_condition = RunCondition::IfPreviousSucceeded;
+            break;
+        case ast::ChainCondition::IfPreviousFailed:
+            pipeline.run_condition = RunCondition::IfPreviousFailed;
             break;
         }
 
-        if (token.kind != TokenKind::Semicolon &&
-            token.kind != TokenKind::Newline &&
-            token.kind != TokenKind::Background) {
-            current_chain_tokens.push_back(token);
-            continue;
+        if (!parse_ok) {
+            pipeline.diagnostics = diagnostics;
         }
 
-        if (current_chain_tokens.empty()) {
-            if (token.kind == TokenKind::Newline) {
-                continue;
-            }
-
-            if (token.kind == TokenKind::Semicolon && i == tokens.size() - 2 &&
-                tokens.back().kind == TokenKind::EndOfFile) {
-                list.valid = true;
-                return true;
-            }
-
-            diagnostics::add_error(diagnostics, token.span,
-                                   "syntax error: missing command before " +
-                                       token.text);
-            return false;
+        for (const ast::SimpleCommand &simple : conditional.pipeline.commands) {
+            pipeline.commands.push_back(
+                lower_simple_command(simple, source, diagnostics, parse_ok));
         }
 
-        ConditionalChain chain{};
-        if (!parse_conditional_tokens_checked(current_chain_tokens, source,
-                                              chain, diagnostics)) {
-            return false;
-        }
-
-        chain.background = (token.kind == TokenKind::Background);
-        list.conditional_chains.push_back(chain);
-        current_chain_tokens.clear();
+        lowered.pipelines.push_back(std::move(pipeline));
     }
 
-    if (current_chain_tokens.empty()) {
-        if (!tokens.empty()) {
-            list.valid = true;
-            return true;
-        }
-
-        diagnostics::add_error(diagnostics, SourceSpan{0, 0},
-                               "syntax error: missing command");
-        return false;
-    }
-
-    ConditionalChain chain{};
-    if (!parse_conditional_tokens_checked(current_chain_tokens, source, chain,
-                                          diagnostics)) {
-        return false;
-    }
-
-    list.conditional_chains.push_back(chain);
-    list.valid = true;
-    return true;
-}
-
-void drop_end_of_file_token(std::vector<Token> &tokens) {
-    if (!tokens.empty() && tokens.back().kind == TokenKind::EndOfFile) {
-        tokens.pop_back();
-    }
+    return lowered;
 }
 
 } // namespace
 
-Command parse_command(const std::string &line) {
-    Command cmd{};
-    cmd.valid = false;
-    std::vector<diagnostics::Diagnostic> diagnostics;
+CommandList parse_command_line(const std::string &line) {
+    ast::ParseResult parsed = parse_program(line);
 
-    std::vector<Token> tokens;
-    LexResult lex_result = lex(line);
-    if (!lex_result.ok) {
-        cmd.diagnostics = std::move(lex_result.diagnostics);
-        return cmd;
+    CommandList out{};
+    out.valid = parsed.ok;
+
+    if (!parsed.ok) {
+        out.diagnostics = parsed.diagnostics;
     }
 
-    tokens = std::move(lex_result.tokens);
-    drop_end_of_file_token(tokens);
-    if (tokens.empty()) {
-        return cmd;
+    for (const ast::StatementPtr &statement : parsed.program.statements) {
+        if (!statement) {
+            continue;
+        }
+
+        if (const auto *chain =
+                std::get_if<ast::CommandChain>(&statement->node)) {
+            out.conditional_chains.push_back(
+                lower_command_chain(*chain, line, parsed.diagnostics,
+                                    parsed.ok));
+            continue;
+        }
+
+        diagnostics::add_error(
+            out.diagnostics, statement->span,
+            "compat: statement cannot be represented as a command line");
+        out.valid = false;
     }
 
-    parse_command_tokens_checked(tokens, line, cmd, diagnostics);
-    cmd.diagnostics = diagnostics;
-    return cmd;
+    if (out.conditional_chains.empty() && !parsed.program.statements.empty()) {
+        out.valid = false;
+    }
+
+    return out;
 }
 
 Pipeline parse_pipeline(const std::string &line) {
-    Pipeline pipe{};
-    pipe.valid = false;
-    std::vector<diagnostics::Diagnostic> diagnostics;
+    CommandList list = parse_command_line(line);
 
-    std::vector<Token> tokens;
-    LexResult lex_result = lex(line);
-    if (!lex_result.ok) {
-        pipe.diagnostics = std::move(lex_result.diagnostics);
-        return pipe;
+    if (!list.valid || list.conditional_chains.empty() ||
+        list.conditional_chains.front().pipelines.empty()) {
+        Pipeline pipeline{};
+        pipeline.valid = false;
+        pipeline.diagnostics = std::move(list.diagnostics);
+        return pipeline;
     }
 
-    tokens = std::move(lex_result.tokens);
-    drop_end_of_file_token(tokens);
-    if (tokens.empty()) {
-        return pipe;
+    Pipeline pipeline =
+        std::move(list.conditional_chains.front().pipelines.front());
+
+    // Old parse_pipeline() represented one pipeline only. If the input contains
+    // additional conditional pipelines or additional command chains, flag that.
+    if (list.conditional_chains.size() > 1 ||
+        list.conditional_chains.front().pipelines.size() > 1) {
+        pipeline.valid = false;
+        diagnostics::add_error(pipeline.diagnostics, SourceSpan{0, line.size()},
+                               "compat: input contains more than one pipeline");
     }
 
-    parse_pipeline_tokens_checked(tokens, line, pipe, diagnostics);
-    pipe.diagnostics = diagnostics;
-    return pipe;
+    return pipeline;
 }
 
-CommandList parse_command_line(const std::string &line) {
-    CommandList list{};
-    list.valid = false;
-    std::vector<diagnostics::Diagnostic> diagnostics;
+Command parse_command(const std::string &line) {
+    Pipeline pipeline = parse_pipeline(line);
 
-    std::vector<Token> tokens;
-    LexResult lex_result = lex(line);
-    if (!lex_result.ok) {
-        list.diagnostics = std::move(lex_result.diagnostics);
-        return list;
+    if (!pipeline.valid || pipeline.commands.empty()) {
+        Command command{};
+        command.valid = false;
+        command.diagnostics = std::move(pipeline.diagnostics);
+        return command;
     }
 
-    tokens = std::move(lex_result.tokens);
-    if (tokens.size() == 1 && tokens.front().kind == TokenKind::EndOfFile) {
-        list.valid = true;
-        return list;
+    Command command = std::move(pipeline.commands.front());
+
+    // Old parse_command() represented one simple command only. If the input
+    // contains a pipe, flag it rather than silently discarding commands.
+    if (pipeline.commands.size() > 1) {
+        command.valid = false;
+        diagnostics::add_error(command.diagnostics, SourceSpan{0, line.size()},
+                               "compat: input contains more than one command");
     }
 
-    parse_command_line_tokens(tokens, line, list, diagnostics);
-    list.diagnostics = diagnostics;
-    return list;
+    return command;
 }
 
 } // namespace parser

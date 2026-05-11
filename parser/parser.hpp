@@ -5,7 +5,7 @@
 #include <sys/types.h>
 #include <vector>
 
-#include "diagnostics.hpp"
+#include "./diagnostics/diagnostics.hpp"
 
 namespace parser {
 

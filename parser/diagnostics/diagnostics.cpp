@@ -113,6 +113,12 @@ void add_error(std::vector<Diagnostic> &diagnostics, SourceSpan span,
     diagnostics.push_back(Diagnostic{DiagnosticSeverity::Error, span, message});
 }
 
+void add_warning(std::vector<Diagnostic> &diagnostics, SourceSpan span,
+                 std::string message) {
+    diagnostics.push_back(
+        Diagnostic{DiagnosticSeverity::Warning, span, message});
+}
+
 void print_diagnostics(const std::string &source,
                        const std::vector<Diagnostic> &diagnostics) {
     for (const Diagnostic &diagnostic : diagnostics) {

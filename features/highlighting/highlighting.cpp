@@ -6,7 +6,7 @@
 
 #include "../../builtins/builtins.hpp"
 #include "../../builtins/env/env.hpp"
-#include "../../parser/lexer.hpp"
+#include "../../parser/lexer/lexer.hpp"
 #include "../completion/path_completion.hpp"
 #include "../shell_text/shell_text.hpp"
 
