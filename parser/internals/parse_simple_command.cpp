@@ -1,21 +1,23 @@
 #include "internal.hpp"
 
-#include <iostream>
 #include <string>
 #include <vector>
 
 #include "../../shell/shell.hpp"
 #include "../assignments/assignment.hpp"
+#include "../diagnostics.hpp"
 
 namespace parser {
 
 bool parse_simple_command(const std::vector<Token> &tokens,
-                          const std::string &source, Command &cmd) {
+                          const std::string &source, Command &cmd,
+                          std::vector<diagnostics::Diagnostic> &diagnostics) {
     cmd = Command{};
     cmd.valid = false;
 
     if (tokens.empty()) {
-        std::cerr << "syntax error: missing command\n";
+        diagnostics::add_error(diagnostics, SourceSpan{0, 0},
+                               "syntax error: missing command");
         return false;
     }
 
@@ -48,8 +50,9 @@ bool parse_simple_command(const std::vector<Token> &tokens,
         if (is_redirect(token.kind)) {
             if (i + 1 >= tokens.size() ||
                 tokens[i + 1].kind != TokenKind::Word) {
-                std::cerr << "syntax error: expected filename after "
-                          << token.text << "\n";
+                diagnostics::add_error(
+                    diagnostics, token.span,
+                    "syntax error: expected filename after " + token.text);
                 return false;
             }
 
@@ -57,13 +60,17 @@ bool parse_simple_command(const std::vector<Token> &tokens,
 
             if (token.kind == TokenKind::InputRedirect) {
                 if (!cmd.input_file.empty()) {
-                    std::cerr << "syntax error: multiple input redirections\n";
+                    diagnostics::add_error(
+                        diagnostics, token.span,
+                        "syntax error: multiple input redirections");
                     return false;
                 }
                 cmd.input_file = filename;
             } else {
                 if (!cmd.output_file.empty()) {
-                    std::cerr << "syntax error: multiple output redirections\n";
+                    diagnostics::add_error(
+                        diagnostics, token.span,
+                        "syntax error: multiple output redirections");
                     return false;
                 }
                 cmd.output_file = filename;
@@ -74,13 +81,15 @@ bool parse_simple_command(const std::vector<Token> &tokens,
             continue;
         }
 
-        std::cerr << "syntax error: unexpected token " << token.text << "\n";
+        diagnostics::add_error(diagnostics, token.span,
+                               "syntax error: unexpected token " + token.text);
         return false;
     }
 
     if ((cmd.args.empty() && cmd.assignments.empty()) ||
         (!cmd.args.empty() && cmd.args[0].empty())) {
-        std::cerr << "syntax error: missing command\n";
+        diagnostics::add_error(diagnostics, SourceSpan{raw_start, raw_end},
+                               "syntax error: missing command");
         return false;
     }
 

@@ -5,6 +5,8 @@
 #include <sys/types.h>
 #include <vector>
 
+#include "diagnostics.hpp"
+
 namespace parser {
 
 enum class RunCondition {
@@ -28,6 +30,8 @@ struct Command {
     bool append_output = false;
 
     bool valid = true;
+    std::vector<diagnostics::Diagnostic> diagnostics;
+
     size_t command_name_offset = std::string::npos;
     size_t command_name_length = 0;
 };
@@ -37,6 +41,7 @@ struct Pipeline {
     RunCondition run_condition = RunCondition::Always;
 
     bool valid = true;
+    std::vector<diagnostics::Diagnostic> diagnostics;
 };
 
 struct ConditionalChain {
@@ -44,11 +49,14 @@ struct ConditionalChain {
     bool background = false;
 
     bool valid = true;
+    std::vector<diagnostics::Diagnostic> diagnostics;
 };
 
 struct CommandList {
     std::vector<ConditionalChain> conditional_chains;
+
     bool valid = true;
+    std::vector<diagnostics::Diagnostic> diagnostics;
 };
 
 Command parse_command(const std::string &line);

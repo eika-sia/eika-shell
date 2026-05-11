@@ -182,6 +182,8 @@ bool expand_aliases(const shell::ShellState &state, parser::CommandList &list) {
         parser::CommandList expanded =
             parser::parse_command_line(expanded_text);
         if (!expanded.valid) {
+            parser::diagnostics::print_diagnostics(expanded_text,
+                                                   expanded.diagnostics);
             return false;
         }
 

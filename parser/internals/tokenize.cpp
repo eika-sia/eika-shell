@@ -1,7 +1,7 @@
 #include "tokenize.hpp"
 
-#include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace parser {
@@ -9,8 +9,7 @@ namespace {
 
 bool should_consume_backslash_escape(char c, bool in_double_quote) {
     if (in_double_quote) {
-        return c == '"' || c == '\\' || c == '$' || c == '!' ||
-               c == '\n';
+        return c == '"' || c == '\\' || c == '$' || c == '!' || c == '\n';
     }
 
     switch (c) {
@@ -43,14 +42,18 @@ bool starts_comment(const std::string &current, char c, bool in_single_quote,
     return current.empty();
 }
 
+Token make_token(TokenKind kind, std::string text, SourceSpan span) {
+    return Token{kind, std::move(text), span, span.start, span.end};
+}
+
 void flush_word(std::vector<Token> &tokens, std::string &current,
                 size_t &current_start, size_t &current_end) {
     if (current_start == std::string::npos) {
         return;
     }
 
-    tokens.push_back(
-        Token{TokenKind::Word, current, current_start, current_end});
+    tokens.push_back(make_token(TokenKind::Word, std::move(current),
+                                SourceSpan{current_start, current_end}));
     current.clear();
     current_start = std::string::npos;
     current_end = std::string::npos;
@@ -74,6 +77,10 @@ TokenizeResult tokenize_line(const std::string &line,
     bool in_double_quote = false;
     bool escape = false;
     bool escape_in_double_quote = false;
+    size_t single_quote_start = std::string::npos;
+    size_t double_quote_start = std::string::npos;
+
+    std::vector<diagnostics::Diagnostic> diagnostics{};
 
     for (size_t i = 0; i < line.size(); ++i) {
         char c = line[i];
@@ -105,6 +112,11 @@ TokenizeResult tokenize_line(const std::string &line,
                 current_start = i;
             }
             current_end = i + 1;
+            if (in_single_quote) {
+                single_quote_start = std::string::npos;
+            } else {
+                single_quote_start = i;
+            }
             in_single_quote = !in_single_quote;
             continue;
         }
@@ -114,6 +126,11 @@ TokenizeResult tokenize_line(const std::string &line,
                 current_start = i;
             }
             current_end = i + 1;
+            if (in_double_quote) {
+                double_quote_start = std::string::npos;
+            } else {
+                double_quote_start = i;
+            }
             in_double_quote = !in_double_quote;
             continue;
         }
@@ -133,44 +150,48 @@ TokenizeResult tokenize_line(const std::string &line,
             flush_word(tokens, current, current_start, current_end);
 
             if (c == '<') {
-                tokens.push_back(
-                    Token{TokenKind::InputRedirect, "<", i, i + 1});
+                tokens.push_back(make_token(TokenKind::InputRedirect, "<",
+                                            SourceSpan{i, i + 1}));
                 continue;
             }
 
             if (c == '|') {
                 if (i + 1 < line.size() && line[i + 1] == '|') {
-                    tokens.push_back(Token{TokenKind::OrIf, "||", i, i + 2});
+                    tokens.push_back(make_token(TokenKind::OrIf, "||",
+                                                SourceSpan{i, i + 2}));
                     ++i;
                 } else {
-                    tokens.push_back(Token{TokenKind::Pipe, "|", i, i + 1});
+                    tokens.push_back(
+                        make_token(TokenKind::Pipe, "|", SourceSpan{i, i + 1}));
                 }
                 continue;
             }
 
             if (c == ';') {
-                tokens.push_back(Token{TokenKind::Sequence, ";", i, i + 1});
+                tokens.push_back(
+                    make_token(TokenKind::Sequence, ";", SourceSpan{i, i + 1}));
                 continue;
             }
 
             if (c == '&') {
                 if (i + 1 < line.size() && line[i + 1] == '&') {
-                    tokens.push_back(Token{TokenKind::AndIf, "&&", i, i + 2});
+                    tokens.push_back(make_token(TokenKind::AndIf, "&&",
+                                                SourceSpan{i, i + 2}));
                     ++i;
                 } else {
-                    tokens.push_back(
-                        Token{TokenKind::Background, "&", i, i + 1});
+                    tokens.push_back(make_token(TokenKind::Background, "&",
+                                                SourceSpan{i, i + 1}));
                 }
                 continue;
             }
 
             if (i + 1 < line.size() && line[i + 1] == '>') {
-                tokens.push_back(
-                    Token{TokenKind::AppendRedirect, ">>", i, i + 2});
+                tokens.push_back(make_token(TokenKind::AppendRedirect, ">>",
+                                            SourceSpan{i, i + 2}));
                 ++i;
             } else {
-                tokens.push_back(
-                    Token{TokenKind::OutputRedirect, ">", i, i + 1});
+                tokens.push_back(make_token(TokenKind::OutputRedirect, ">",
+                                            SourceSpan{i, i + 1}));
             }
             continue;
         }
@@ -190,11 +211,18 @@ TokenizeResult tokenize_line(const std::string &line,
 
     if ((in_single_quote || in_double_quote)) {
         if (mode == TokenizeMode::Strict) {
-            std::cerr << "syntax error: unmatched quote\n";
+            const size_t quote_start =
+                in_single_quote ? single_quote_start : double_quote_start;
+            const size_t span_start =
+                quote_start == std::string::npos ? current_start : quote_start;
+            diagnostics::add_error(diagnostics,
+                                   SourceSpan{span_start, current_end},
+                                   "syntax error: unmatched quote");
         } else {
             flush_word(tokens, current, current_start, current_end);
         }
-        return TokenizeResult{false, in_single_quote, in_double_quote};
+        return TokenizeResult{false, in_single_quote, in_double_quote,
+                              diagnostics};
     }
 
     flush_word(tokens, current, current_start, current_end);

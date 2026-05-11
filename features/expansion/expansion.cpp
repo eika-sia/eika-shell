@@ -56,6 +56,10 @@ std::string expand_tilde(const shell::ShellState &state,
 
 bool reparse_command(parser::Command &cmd, std::string expanded) {
     cmd = parser::parse_command(expanded);
+    if (!cmd.valid) {
+        parser::diagnostics::print_diagnostics(expanded, cmd.diagnostics);
+    }
+
     return cmd.valid;
 }
 

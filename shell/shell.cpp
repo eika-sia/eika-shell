@@ -113,8 +113,7 @@ std::string trim(const std::string &source) {
 void execute_command_line(ShellState &state, std::string line,
                           ExecuteOptions options) {
     state.last_status = 0;
-    line = trim(line);
-    if (line.empty())
+    if (trim(line).empty())
         return;
 
     const ExecutionClock::time_point started_at = ExecutionClock::now();
@@ -127,8 +126,13 @@ void execute_command_line(ShellState &state, std::string line,
         return;
     }
 
+    if (options.save_history) {
+        features::save_command_line(state, line);
+    }
+
     parser::CommandList command_line = parser::parse_command_line(line);
     if (!command_line.valid) {
+        parser::diagnostics::print_diagnostics(line, command_line.diagnostics);
         state.last_status = 2;
         update_last_exec_seconds(state, started_at);
         return;
@@ -172,10 +176,6 @@ void execute_command_line(ShellState &state, std::string line,
         if (executed_any_pipeline) {
             state.last_status = chain_status;
         }
-    }
-
-    if (options.save_history) {
-        features::save_command_line(state, line);
     }
 
     update_last_exec_seconds(state, started_at);

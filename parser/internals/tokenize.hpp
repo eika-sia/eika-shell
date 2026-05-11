@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "../diagnostics.hpp"
+
 namespace parser {
 
 enum class TokenKind {
@@ -20,6 +22,8 @@ enum class TokenKind {
 struct Token {
     TokenKind kind;
     std::string text;
+    SourceSpan span;
+
     size_t raw_start = std::string::npos;
     size_t raw_end = std::string::npos;
 };
@@ -33,6 +37,7 @@ struct TokenizeResult {
     bool ok = true;
     bool unmatched_single_quote = false;
     bool unmatched_double_quote = false;
+    std::vector<diagnostics::Diagnostic> diagnostics;
 };
 
 bool is_redirect(TokenKind kind);
