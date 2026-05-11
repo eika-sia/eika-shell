@@ -369,12 +369,12 @@ This avoids double initialization bugs.
 This is a rough target grammar.
 
 ```text
-program         -> statement_list EOF
-block           -> statement_list
+program            -> statement_list EOF
+block              -> statement_list
 
-statement_list  -> terminator*
-                   (statement (terminator+ statement)*)?
-                   terminator*
+statement_list     -> terminator*
+                      (statement (terminator+ statement)*)?
+                      terminator*
 
 statement          -> fn_decl
                     | if_stmt
