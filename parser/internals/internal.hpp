@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../diagnostics.hpp"
+#include "../lexer.hpp"
 #include "../parser.hpp"
-#include "./tokenize.hpp"
 
 #include <string>
 

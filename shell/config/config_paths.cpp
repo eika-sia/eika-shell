@@ -118,6 +118,7 @@ std::string data_scripts_path(const ShellState &state) {
 
 std::vector<std::string> script_search_paths(const ShellState &state) {
     std::vector<std::string> paths;
+    add_if_nonempty(paths, "./");
     add_if_nonempty(paths, config_scripts_path(state));
     add_if_nonempty(paths, data_scripts_path(state));
 

@@ -1,5 +1,5 @@
 #include "internals/internal.hpp"
-#include "internals/tokenize.hpp"
+#include "lexer.hpp"
 
 #include <initializer_list>
 #include <string>
@@ -39,7 +39,8 @@ bool parse_command_tokens_checked(
     std::vector<diagnostics::Diagnostic> &diagnostics) {
     if (!reject_tokens(tokens,
                        {TokenKind::Pipe, TokenKind::AndIf, TokenKind::OrIf,
-                        TokenKind::Sequence, TokenKind::Background},
+                        TokenKind::Semicolon, TokenKind::Newline,
+                        TokenKind::Background, TokenKind::EndOfFile},
                        diagnostics)) {
         return false;
     }
@@ -51,8 +52,9 @@ bool parse_pipeline_tokens_checked(
     const std::vector<Token> &tokens, const std::string &source, Pipeline &pipe,
     std::vector<diagnostics::Diagnostic> &diagnostics) {
     if (!reject_tokens(tokens,
-                       {TokenKind::AndIf, TokenKind::OrIf, TokenKind::Sequence,
-                        TokenKind::Background},
+                       {TokenKind::AndIf, TokenKind::OrIf,
+                        TokenKind::Semicolon, TokenKind::Newline,
+                        TokenKind::Background, TokenKind::EndOfFile},
                        diagnostics)) {
         return false;
     }
@@ -64,7 +66,9 @@ bool parse_conditional_tokens_checked(
     const std::vector<Token> &tokens, const std::string &source,
     ConditionalChain &chain,
     std::vector<diagnostics::Diagnostic> &diagnostics) {
-    if (!reject_tokens(tokens, {TokenKind::Sequence, TokenKind::Background},
+    if (!reject_tokens(tokens,
+                       {TokenKind::Semicolon, TokenKind::Newline,
+                        TokenKind::Background, TokenKind::EndOfFile},
                        diagnostics)) {
         return false;
     }
@@ -81,14 +85,24 @@ bool parse_command_line_tokens(
     for (size_t i = 0; i < tokens.size(); ++i) {
         const Token &token = tokens[i];
 
-        if (token.kind != TokenKind::Sequence &&
+        if (token.kind == TokenKind::EndOfFile) {
+            break;
+        }
+
+        if (token.kind != TokenKind::Semicolon &&
+            token.kind != TokenKind::Newline &&
             token.kind != TokenKind::Background) {
             current_chain_tokens.push_back(token);
             continue;
         }
 
         if (current_chain_tokens.empty()) {
-            if (token.kind == TokenKind::Sequence && i == tokens.size() - 1) {
+            if (token.kind == TokenKind::Newline) {
+                continue;
+            }
+
+            if (token.kind == TokenKind::Semicolon && i == tokens.size() - 2 &&
+                tokens.back().kind == TokenKind::EndOfFile) {
                 list.valid = true;
                 return true;
             }
@@ -111,8 +125,7 @@ bool parse_command_line_tokens(
     }
 
     if (current_chain_tokens.empty()) {
-        if (!tokens.empty() && (tokens.back().kind == TokenKind::Sequence ||
-                                tokens.back().kind == TokenKind::Background)) {
+        if (!tokens.empty()) {
             list.valid = true;
             return true;
         }
@@ -133,6 +146,12 @@ bool parse_command_line_tokens(
     return true;
 }
 
+void drop_end_of_file_token(std::vector<Token> &tokens) {
+    if (!tokens.empty() && tokens.back().kind == TokenKind::EndOfFile) {
+        tokens.pop_back();
+    }
+}
+
 } // namespace
 
 Command parse_command(const std::string &line) {
@@ -141,11 +160,14 @@ Command parse_command(const std::string &line) {
     std::vector<diagnostics::Diagnostic> diagnostics;
 
     std::vector<Token> tokens;
-    TokenizeResult tokenize_result = tokenize_line(line, tokens);
-    if (!tokenize_result.ok) {
-        cmd.diagnostics = std::move(tokenize_result.diagnostics);
+    LexResult lex_result = lex(line);
+    if (!lex_result.ok) {
+        cmd.diagnostics = std::move(lex_result.diagnostics);
         return cmd;
     }
+
+    tokens = std::move(lex_result.tokens);
+    drop_end_of_file_token(tokens);
     if (tokens.empty()) {
         return cmd;
     }
@@ -161,11 +183,14 @@ Pipeline parse_pipeline(const std::string &line) {
     std::vector<diagnostics::Diagnostic> diagnostics;
 
     std::vector<Token> tokens;
-    TokenizeResult tokenize_result = tokenize_line(line, tokens);
-    if (!tokenize_result.ok) {
-        pipe.diagnostics = std::move(tokenize_result.diagnostics);
+    LexResult lex_result = lex(line);
+    if (!lex_result.ok) {
+        pipe.diagnostics = std::move(lex_result.diagnostics);
         return pipe;
     }
+
+    tokens = std::move(lex_result.tokens);
+    drop_end_of_file_token(tokens);
     if (tokens.empty()) {
         return pipe;
     }
@@ -181,13 +206,14 @@ CommandList parse_command_line(const std::string &line) {
     std::vector<diagnostics::Diagnostic> diagnostics;
 
     std::vector<Token> tokens;
-    TokenizeResult tokenize_result = tokenize_line(line, tokens);
-    if (!tokenize_result.ok) {
-        list.diagnostics = std::move(tokenize_result.diagnostics);
+    LexResult lex_result = lex(line);
+    if (!lex_result.ok) {
+        list.diagnostics = std::move(lex_result.diagnostics);
         return list;
     }
 
-    if (tokens.empty()) {
+    tokens = std::move(lex_result.tokens);
+    if (tokens.size() == 1 && tokens.front().kind == TokenKind::EndOfFile) {
         list.valid = true;
         return list;
     }

@@ -1,11 +1,12 @@
 #include "highlighting.hpp"
 
 #include <cctype>
+#include <utility>
+#include <vector>
 
 #include "../../builtins/builtins.hpp"
 #include "../../builtins/env/env.hpp"
-#include "../../parser/assignments/assignment.hpp"
-#include "../../parser/internals/tokenize.hpp"
+#include "../../parser/lexer.hpp"
 #include "../completion/path_completion.hpp"
 #include "../shell_text/shell_text.hpp"
 
@@ -36,8 +37,8 @@ struct StyledRange {
 
 bool token_contains_quotes(const std::string &line,
                            const parser::Token &token) {
-    if (token.raw_start == std::string::npos || token.raw_end > line.size() ||
-        token.raw_start >= token.raw_end) {
+    if (token.span.start == std::string::npos || token.span.end > line.size() ||
+        token.span.start >= token.span.end) {
         return false;
     }
 
@@ -45,7 +46,7 @@ bool token_contains_quotes(const std::string &line,
     bool in_double_quote = false;
     bool escape = false;
 
-    for (size_t i = token.raw_start; i < token.raw_end; ++i) {
+    for (size_t i = token.span.start; i < token.span.end; ++i) {
         const char c = line[i];
 
         if (escape) {
@@ -96,7 +97,8 @@ bool is_command_valid(const shell::ShellState &state,
 
 bool is_existing_path_token(const shell::ShellState &state,
                             const std::string &token) {
-    return features::path_exists(state, expand_for_lookup(state, token));
+    return features::path_exists(state, expand_for_lookup(state, token)) ||
+           features::path_exists(state, "./" + token);
 }
 
 bool is_valid_history_reference(const shell::ShellState &state,
@@ -186,12 +188,6 @@ TextStyle classify_word_token(const shell::ShellState &state,
     }
 
     if (expecting_command_word) {
-        std::string name, value;
-        if (parser::is_assignment_word(token.text, name, value)) {
-            style.fg = HighlightColor::Blue;
-            return style;
-        }
-
         if (is_valid_history_reference(state, token.text)) {
             style.fg = HighlightColor::Green;
             style.bold = true;
@@ -222,7 +218,7 @@ TextStyle classify_word_token(const shell::ShellState &state,
         style.fg = HighlightColor::Yellow;
     }
 
-    if (path_like && is_existing_path_token(state, token.text)) {
+    if (is_existing_path_token(state, token.text)) {
         style.underline = true;
     }
 
@@ -299,7 +295,8 @@ std::string render_with_styles(const std::string &line,
 std::string render_highlighted_line(const shell::ShellState &state,
                                     const std::string &line) {
     std::vector<parser::Token> tokens;
-    parser::tokenize_line(line, tokens, parser::TokenizeMode::Relaxed);
+    parser::LexResult lex_result = parser::lex(line, parser::LexMode::Relaxed);
+    tokens = std::move(lex_result.tokens);
     const size_t comment_start = find_comment_start(line);
 
     std::vector<StyledRange> ranges;
@@ -308,6 +305,12 @@ std::string render_highlighted_line(const shell::ShellState &state,
     bool expecting_redirect_target = false;
 
     for (const parser::Token &token : tokens) {
+        if (token.kind == parser::TokenKind::Assignment) {
+            ranges.push_back({token.span.start, token.span.end,
+                              TextStyle{HighlightColor::Blue}});
+            continue;
+        }
+
         if (token.kind == parser::TokenKind::Word) {
             TextStyle style =
                 classify_word_token(state, line, token, expecting_command_word,
@@ -315,7 +318,7 @@ std::string render_highlighted_line(const shell::ShellState &state,
 
             if (style.fg != HighlightColor::None || style.bold ||
                 style.underline) {
-                ranges.push_back({token.raw_start, token.raw_end, style});
+                ranges.push_back({token.span.start, token.span.end, style});
             }
 
             if (expecting_redirect_target) {
@@ -324,18 +327,20 @@ std::string render_highlighted_line(const shell::ShellState &state,
             }
 
             if (expecting_command_word) {
-                std::string name, value;
-                if (!parser::is_assignment_word(token.text, name, value)) {
-                    expecting_command_word = false;
-                }
+                expecting_command_word = false;
             }
 
             continue;
         }
 
+        if (token.kind == parser::TokenKind::EndOfFile ||
+            token.kind == parser::TokenKind::Newline) {
+            continue;
+        }
+
         // operator token
-        ranges.push_back(
-            {token.raw_start, token.raw_end, TextStyle{HighlightColor::Cyan}});
+        ranges.push_back({token.span.start, token.span.end,
+                          TextStyle{HighlightColor::Cyan}});
 
         if (parser::is_redirect(token.kind)) {
             expecting_redirect_target = true;
@@ -347,8 +352,8 @@ std::string render_highlighted_line(const shell::ShellState &state,
     }
 
     if (comment_start != std::string::npos) {
-        ranges.push_back({comment_start, line.size(),
-                          TextStyle{HighlightColor::Gray}});
+        ranges.push_back(
+            {comment_start, line.size(), TextStyle{HighlightColor::Gray}});
     }
 
     return render_with_styles(line, ranges);

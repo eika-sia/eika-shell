@@ -30,7 +30,7 @@ struct CompletionContext {
     bool preserve_dot_slash = false;
 };
 
-// Keep this in sync with parser/internals/tokenize.cpp.
+// Keep this in sync with parser/lexer.cpp.
 bool should_consume_backslash_escape(char c, bool in_double_quote) {
     if (in_double_quote) {
         return c == '"' || c == '\\' || c == '$' || c == '!' || c == '\n';
@@ -343,8 +343,8 @@ bool is_directory_candidate(const CompletionCandidate &candidate) {
     return candidate.kind == CompletionDisplayKind::Directory;
 }
 
-std::string format_selection_candidate(
-    const CompletionCandidate &candidate, CompletionQuoteMode quote_mode) {
+std::string format_selection_candidate(const CompletionCandidate &candidate,
+                                       CompletionQuoteMode quote_mode) {
     CompletionFormatOptions format{};
     format.quote_mode = quote_mode;
 
@@ -357,9 +357,9 @@ std::string format_selection_candidate(
     return replacement;
 }
 
-std::vector<std::string> selection_candidates(
-    const std::vector<CompletionCandidate> &matches,
-    CompletionQuoteMode quote_mode) {
+std::vector<std::string>
+selection_candidates(const std::vector<CompletionCandidate> &matches,
+                     CompletionQuoteMode quote_mode) {
     std::vector<std::string> out;
     out.reserve(matches.size());
 
@@ -448,8 +448,10 @@ CompletionResult complete_at_cursor(const shell::ShellState &state,
                                 {}};
     }
 
-    return CompletionResult{CompletionAction::ShowCandidates, ctx.raw_begin,
-                            ctx.raw_end, "",
+    return CompletionResult{CompletionAction::ShowCandidates,
+                            ctx.raw_begin,
+                            ctx.raw_end,
+                            "",
                             selection_candidates(matches, ctx.quote_mode),
                             display_candidates(matches)};
 }

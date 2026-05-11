@@ -3,45 +3,51 @@
 #include <string>
 #include <vector>
 
-#include "../diagnostics.hpp"
+#include "diagnostics.hpp"
 
 namespace parser {
 
 enum class TokenKind {
     Word,
-    InputRedirect,
-    OutputRedirect,
-    AppendRedirect,
+    Assignment,
+    Newline,
+    Semicolon,
     Pipe,
     AndIf,
     OrIf,
-    Sequence,
     Background,
+    InputRedirect,
+    OutputRedirect,
+    AppendRedirect,
+    LeftParen,
+    RightParen,
+    LeftBracket,
+    RightBracket,
+    Equals,
+    EndOfFile,
 };
 
 struct Token {
     TokenKind kind;
     std::string text;
+    std::string raw_text;
     SourceSpan span;
-
-    size_t raw_start = std::string::npos;
-    size_t raw_end = std::string::npos;
 };
 
-enum class TokenizeMode {
+enum class LexMode {
     Strict,
     Relaxed,
 };
 
-struct TokenizeResult {
+struct LexResult {
     bool ok = true;
     bool unmatched_single_quote = false;
     bool unmatched_double_quote = false;
+    std::vector<Token> tokens;
     std::vector<diagnostics::Diagnostic> diagnostics;
 };
 
 bool is_redirect(TokenKind kind);
-TokenizeResult tokenize_line(const std::string &line,
-                             std::vector<Token> &tokens,
-                             TokenizeMode mode = TokenizeMode::Strict);
+LexResult lex(const std::string &source, LexMode mode = LexMode::Strict);
+
 } // namespace parser

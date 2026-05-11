@@ -21,28 +21,33 @@ bool parse_simple_command(const std::vector<Token> &tokens,
         return false;
     }
 
-    const size_t raw_start = tokens.front().raw_start;
-    const size_t raw_end = tokens.back().raw_end;
-    cmd.raw = shell::trim(source.substr(raw_start, raw_end - raw_start));
-
-    bool seen_command_word = false;
+    const size_t command_start = tokens.front().span.start;
+    const size_t command_end = tokens.back().span.end;
+    cmd.raw =
+        shell::trim(source.substr(command_start, command_end - command_start));
 
     for (size_t i = 0; i < tokens.size(); ++i) {
         const Token &token = tokens[i];
 
-        if (token.kind == TokenKind::Word) {
+        if (token.kind == TokenKind::Assignment) {
             std::string name;
             std::string value;
-            if (!seen_command_word &&
-                is_assignment_word(token.text, name, value)) {
-                cmd.assignments.push_back(Assignment{name, value});
-            } else {
-                cmd.args.push_back(token.text);
-                if (cmd.command_name_offset == std::string::npos) {
-                    cmd.command_name_offset = token.raw_start - raw_start;
-                    cmd.command_name_length = token.raw_end - token.raw_start;
-                }
-                seen_command_word = true;
+            if (!is_assignment_word(token.text, name, value)) {
+                diagnostics::add_error(
+                    diagnostics, token.span,
+                    "syntax error: invalid assignment " + token.text);
+                return false;
+            }
+
+            cmd.assignments.push_back(Assignment{name, value});
+            continue;
+        }
+
+        if (token.kind == TokenKind::Word) {
+            cmd.args.push_back(token.text);
+            if (cmd.command_name_offset == std::string::npos) {
+                cmd.command_name_offset = token.span.start - command_start;
+                cmd.command_name_length = token.span.end - token.span.start;
             }
             continue;
         }
@@ -88,7 +93,8 @@ bool parse_simple_command(const std::vector<Token> &tokens,
 
     if ((cmd.args.empty() && cmd.assignments.empty()) ||
         (!cmd.args.empty() && cmd.args[0].empty())) {
-        diagnostics::add_error(diagnostics, SourceSpan{raw_start, raw_end},
+        diagnostics::add_error(diagnostics,
+                               SourceSpan{command_start, command_end},
                                "syntax error: missing command");
         return false;
     }
