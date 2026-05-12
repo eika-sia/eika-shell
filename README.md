@@ -13,11 +13,19 @@ Small Unix-like shell written in C++.
 - [Changelog](docs/changelog.md)
   Version history for the v1.0.0 baseline, v1.1.x UX/install work, and planned v1.2.0 scripting foundation.
 
-## Build
+## Installation
+
+### AUR
+
+Available on AUR! Please install it via `eika-shell-git`
+
+Config and persistance files are not provided by aur so you need to make them yourself. Please consult a later section on that.
+
+### Manual build
 
 ### Requirements
 - CMake to build the shell
-- Nerd font of your choice to render git icon in header
+- Nerd Font of your choice to render the git icon in the prompt
 
 Use the provided helper:
 
