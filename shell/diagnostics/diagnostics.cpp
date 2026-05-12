@@ -1,10 +1,11 @@
 #include "diagnostics.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <iostream>
 #include <string>
 
-namespace parser::diagnostics {
+namespace shell::diagnostics {
 namespace {
 
 constexpr const char *reset = "\033[0m";
@@ -77,7 +78,8 @@ const char *severity_color(DiagnosticSeverity severity) {
     return red;
 }
 
-SourceSpan normalized_span(const std::string &source, SourceSpan span) {
+parser::SourceSpan normalized_span(const std::string &source,
+                                   parser::SourceSpan span) {
     span.start = clamp_offset(source, span.start);
     span.end = clamp_offset(source, span.end);
     if (span.end < span.start) {
@@ -89,12 +91,10 @@ SourceSpan normalized_span(const std::string &source, SourceSpan span) {
 
 std::string spaces(size_t count) { return std::string(count, ' '); }
 
-} // namespace
-
-SourceLocation source_location_for_offset(const std::string &source,
-                                          size_t offset) {
+parser::SourceLocation source_location_for_offset(const std::string &source,
+                                                  size_t offset) {
     offset = clamp_offset(source, offset);
-    SourceLocation location{};
+    parser::SourceLocation location{};
 
     for (size_t i = 0; i < offset; ++i) {
         if (source[i] == '\n') {
@@ -108,22 +108,19 @@ SourceLocation source_location_for_offset(const std::string &source,
     return location;
 }
 
-void add_error(std::vector<Diagnostic> &diagnostics, SourceSpan span,
+} // namespace
+
+void add_error(std::vector<Diagnostic> &diagnostics, parser::SourceSpan span,
                std::string message) {
     diagnostics.push_back(Diagnostic{DiagnosticSeverity::Error, span, message});
-}
-
-void add_warning(std::vector<Diagnostic> &diagnostics, SourceSpan span,
-                 std::string message) {
-    diagnostics.push_back(
-        Diagnostic{DiagnosticSeverity::Warning, span, message});
 }
 
 void print_diagnostics(const std::string &source,
                        const std::vector<Diagnostic> &diagnostics) {
     for (const Diagnostic &diagnostic : diagnostics) {
-        const SourceSpan span = normalized_span(source, diagnostic.span);
-        const SourceLocation location =
+        const parser::SourceSpan span =
+            normalized_span(source, diagnostic.span);
+        const parser::SourceLocation location =
             source_location_for_offset(source, span.start);
         const size_t line_start = line_start_for_offset(source, span.start);
         const size_t line_end = line_end_for_offset(source, span.start);
@@ -146,7 +143,8 @@ void print_diagnostics(const std::string &source,
         std::cerr << dim << spaces(line_number_width) << " | " << reset
                   << spaces(caret_start) << color
                   << std::string(caret_count, '^') << reset << "\n";
+        std::cerr.flush();
     }
 }
 
-} // namespace parser::diagnostics
+} // namespace shell::diagnostics

@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
                 return 2;
             }
 
-            shell::execute_command_line(state, argv[2], options);
+            shell::execute_script(state, argv[2], options);
             process::cleanup_finished_processes(state);
             shell::terminal::shutdown_terminal(state);
             features::save_shell_history(state);
@@ -71,11 +71,11 @@ int main(int argc, char **argv) {
         }
         if (input.eof) {
             shell::terminal::write_stdout_line("exit");
-            shell::execute_command_line(state, "exit");
+            shell::execute_script(state, "exit");
             break;
         }
 
-        shell::execute_command_line(state, input.line);
+        shell::execute_script(state, input.line);
         process::cleanup_finished_processes(state);
     }
 

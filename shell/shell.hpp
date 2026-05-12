@@ -38,10 +38,10 @@ struct ExecuteOptions {
 };
 
 void init_shell(ShellState &state);
-void execute_command_line(ShellState &state, std::string line,
-                          ExecuteOptions options = {});
+
+void execute_script(ShellState &state, std::string line,
+                    ExecuteOptions options = {});
 int execute_stream(ShellState &state, std::istream &stream,
                    ExecuteOptions options = {});
-std::string trim(const std::string &source);
 
 } // namespace shell

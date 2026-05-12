@@ -5,12 +5,14 @@
 
 namespace shell::exec {
 
-int run_pipeline(ShellState &state, const parser::Pipeline &pipe,
-                 bool background);
+int run_pipeline(ShellState &state, const parser::ast::Pipeline &pipe,
+                 bool background,
+                 std::vector<diagnostics::Diagnostic> &diagnostics);
 int run_parent_assignments_with_redirections(
-    ShellState &state, const parser::Command &cmd);
-int run_parent_builtin_with_redirections(ShellState &state,
-                                         const parser::Command &cmd,
-                                         const builtins::BuiltinPlan &plan);
+    ShellState &state, const parser::ast::SimpleCommand &cmd);
+int run_parent_builtin_with_redirections(
+    ShellState &state, const parser::ast::SimpleCommand &cmd,
+    const builtins::BuiltinPlan &plan,
+    std::vector<diagnostics::Diagnostic> &diagnostics);
 
 } // namespace shell::exec

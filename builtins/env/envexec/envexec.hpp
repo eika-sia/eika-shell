@@ -1,7 +1,11 @@
 #pragma once
 
-#include "../../../parser/parser.hpp"
+#include "../../../parser/ast.hpp"
 #include "../../../shell/shell.hpp"
+
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace builtins::env {
 
@@ -14,11 +18,11 @@ using AssignmentSnapshot = std::unordered_map<std::string, SavedVariable>;
 
 void apply_persistent_assignments(
     shell::ShellState &state,
-    const std::vector<parser::Assignment> &assignments);
+    const std::vector<parser::ast::Assignment> &assignments);
 
-AssignmentSnapshot
-apply_temporary_assignments(shell::ShellState &state,
-                            const std::vector<parser::Assignment> &assignments);
+AssignmentSnapshot apply_temporary_assignments(
+    shell::ShellState &state,
+    const std::vector<parser::ast::Assignment> &assignments);
 
 void restore_temporary_assignments(shell::ShellState &state,
                                    const AssignmentSnapshot &snapshot);

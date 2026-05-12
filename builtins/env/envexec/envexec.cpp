@@ -6,38 +6,37 @@ namespace builtins::env {
 
 void apply_persistent_assignments(
     shell::ShellState &state,
-    const std::vector<parser::Assignment> &assignments) {
-    for (parser::Assignment assign : assignments) {
-        set_shell_variable(state, assign.name, assign.value);
+    const std::vector<parser::ast::Assignment> &assignments) {
+    for (const parser::ast::Assignment &assign : assignments) {
+        set_shell_variable(state, assign.name.text, assign.value.text);
     }
 }
 
 AssignmentSnapshot apply_temporary_assignments(
     shell::ShellState &state,
-    const std::vector<parser::Assignment> &assignments) {
+    const std::vector<parser::ast::Assignment> &assignments) {
     AssignmentSnapshot old{};
 
-    for (const parser::Assignment &assign : assignments) {
-        const shell::ShellVariable *var = find_variable(state, assign.name);
+    for (const parser::ast::Assignment &assign : assignments) {
+        const shell::ShellVariable *var =
+            find_variable(state, assign.name.text);
         bool existed = var != nullptr;
 
-        // Snapshot the original value temporarily
-        // It is used for parent only builtin execution with preloading
-        // Example: `HOME=/tmp cd` sets pwd to /tmp
-        if (old.count(assign.name) == 0) {
-            old[assign.name] =
+        if (old.count(assign.name.text) == 0) {
+            old[assign.name.text] =
                 existed ? SavedVariable{true, *var} : SavedVariable{false, {}};
         }
 
         if (existed) {
-            state.variables[assign.name] =
-                shell::ShellVariable{assign.value, var->exported};
+            state.variables[assign.name.text] =
+                shell::ShellVariable{assign.value.text, var->exported};
         } else {
-            state.variables[assign.name] =
-                shell::ShellVariable{assign.value, false};
+            state.variables[assign.name.text] =
+                shell::ShellVariable{assign.value.text, false};
         }
 
-        if (setenv(assign.name.c_str(), assign.value.c_str(), 1) == -1) {
+        if (setenv(assign.name.text.c_str(), assign.value.text.c_str(), 1) ==
+            -1) {
             perror("setenv");
         }
     }

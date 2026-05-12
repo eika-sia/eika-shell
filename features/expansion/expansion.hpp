@@ -1,6 +1,9 @@
 #pragma once
 
-#include "../../parser/parser.hpp"
+#include <vector>
+
+#include "../../parser/ast.hpp"
+#include "../../shell/diagnostics/diagnostics.hpp"
 
 namespace shell {
 struct ShellState;
@@ -8,6 +11,7 @@ struct ShellState;
 
 namespace features {
 
-bool expand_command(shell::ShellState &state, parser::Command &cmd);
+bool expand_pipeline(shell::ShellState &state, parser::ast::Pipeline &pipeline,
+                     std::vector<shell::diagnostics::Diagnostic> &diagnostics);
 
 } // namespace features

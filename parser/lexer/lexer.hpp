@@ -3,7 +3,8 @@
 #include <string>
 #include <vector>
 
-#include "../diagnostics/diagnostics.hpp"
+#include "../../shell/diagnostics/diagnostics.hpp"
+#include "../source.hpp"
 
 namespace parser {
 
@@ -44,7 +45,7 @@ struct LexResult {
     bool unmatched_single_quote = false;
     bool unmatched_double_quote = false;
     std::vector<Token> tokens;
-    std::vector<diagnostics::Diagnostic> diagnostics;
+    std::vector<shell::diagnostics::Diagnostic> diagnostics;
 };
 
 bool is_redirect(TokenKind kind);

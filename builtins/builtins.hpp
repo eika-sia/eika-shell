@@ -1,10 +1,9 @@
 #pragma once
 
-#include <istream>
 #include <string>
 #include <vector>
 
-#include "../parser/parser.hpp"
+#include "../parser/ast.hpp"
 #include "../shell/shell.hpp"
 
 namespace builtins {
@@ -38,12 +37,13 @@ struct BuiltinPlan {
     BuiltinDecision decision;
 };
 
-BuiltinPlan plan_builtin(const parser::Command &cmd, ExecContext ctx);
-int run_builtin(shell::ShellState &state, const parser::Command &cmd,
-                BuiltinKind kind);
+BuiltinPlan plan_builtin(const parser::ast::SimpleCommand &cmd,
+                         ExecContext ctx);
+int run_builtin(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+                BuiltinKind kind,
+                std::vector<shell::diagnostics::Diagnostic> &diagnostics);
 int source_file(shell::ShellState &state, const std::string &path,
                 bool silent_missing = false);
-int source_stream(shell::ShellState &state, std::istream &stream);
 
 bool is_builtin_name(const std::string &name);
 std::vector<std::string> builtin_names();

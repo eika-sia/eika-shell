@@ -1,6 +1,7 @@
 #pragma once
 
-#include "./diagnostics/diagnostics.hpp"
+#include "../shell/diagnostics/diagnostics.hpp"
+#include "source.hpp"
 
 #include <memory>
 #include <optional>
@@ -174,7 +175,7 @@ struct Program {
 struct ParseResult {
     Program program;
     bool ok = true;
-    std::vector<diagnostics::Diagnostic> diagnostics;
+    std::vector<shell::diagnostics::Diagnostic> diagnostics;
 };
 
 inline SourceSpan merge_spans(SourceSpan begin, SourceSpan end) {

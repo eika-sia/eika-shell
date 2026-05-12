@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <unistd.h>
+#include <vector>
 
 #include "../features/completion/path_completion.hpp"
 #include "../shell/config/config_paths.hpp"
@@ -18,7 +19,9 @@
 namespace builtins {
 namespace {
 
-using BuiltinFn = int (*)(shell::ShellState &, const parser::Command &);
+using BuiltinFn = int (*)(shell::ShellState &,
+                          const parser::ast::SimpleCommand &,
+                          std::vector<shell::diagnostics::Diagnostic> &);
 
 struct BuiltinSpec {
     std::string_view name;
@@ -49,15 +52,10 @@ std::string get_shell_pwd(const shell::ShellState &state) {
     return get_current_working_directory();
 }
 
-void set_local_shell_variable(shell::ShellState &state, std::string name,
-                              std::string value) {
-    state.variables[name] = shell::ShellVariable{value, false};
-}
-
 bool update_directory_variables(shell::ShellState &state,
                                 const std::string &old_pwd) {
     if (!old_pwd.empty()) {
-        set_local_shell_variable(state, "OLDPWD", old_pwd);
+        state.variables["OLDPWD"] = shell::ShellVariable{old_pwd, false};
     }
 
     const std::string new_pwd = get_current_working_directory();
@@ -69,9 +67,11 @@ bool update_directory_variables(shell::ShellState &state,
     return true;
 }
 
-int run_exit(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() != 1) {
-        std::cerr << "exit: unexpected arguments\n";
+int run_exit(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+             std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    if (cmd.invocation->words.size() != 1) {
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "exit: unexpected arguments");
         return 1;
     }
 
@@ -87,34 +87,39 @@ int run_exit(shell::ShellState &state, const parser::Command &cmd) {
     return status;
 }
 
-int run_cd(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() > 2) {
-        std::cerr << "cd: too many arguments\n";
+int run_cd(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+           std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    if (cmd.invocation->words.size() > 2) {
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "cd: too many arguments");
         return 1;
     }
 
     std::string target;
     bool print_new_pwd = false;
 
-    if (cmd.args.size() == 1) {
+    if (cmd.invocation->words.size() == 1) {
         const shell::ShellVariable *home = env::find_variable(state, "HOME");
         if (home == nullptr || home->value.empty()) {
-            std::cerr << "cd: only 1 argument provided and HOME is not set\n";
+            shell::diagnostics::add_error(
+                diagnostics, cmd.span,
+                "cd: only 1 argument provided but HOME not set");
             return 1;
         }
         target = home->value;
-    } else if (cmd.args[1] == "-") {
+    } else if (cmd.invocation->words[1].text == "-") {
         const shell::ShellVariable *oldpwd =
             env::find_variable(state, "OLDPWD");
         if (oldpwd == nullptr || oldpwd->value.empty()) {
-            std::cerr << "cd: OLDPWD not set\n";
+            shell::diagnostics::add_error(diagnostics, cmd.span,
+                                          "cd: OLDPWD not set");
             return 1;
         }
 
         target = oldpwd->value;
         print_new_pwd = true;
     } else {
-        target = cmd.args[1];
+        target = cmd.invocation->words[1].text;
     }
 
     const std::string old_pwd = get_shell_pwd(state);
@@ -134,9 +139,11 @@ int run_cd(shell::ShellState &state, const parser::Command &cmd) {
     return 0;
 }
 
-int run_pwd(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() != 1) {
-        std::cerr << "pwd: unexpected arguments\n";
+int run_pwd(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+            std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    if (cmd.invocation->words.size() != 1) {
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "pwd: unexpected arguments");
         return 1;
     }
 
@@ -176,18 +183,22 @@ std::string describe_command_type(const shell::ShellState &state,
     return "";
 }
 
-int run_type(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() < 2) {
-        std::cerr << "type: unexpected arguments\n";
+int run_type(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+             std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    if (cmd.invocation->words.size() < 2) {
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "type: expected arguments");
         return 1;
     }
 
     int status = 0;
-    for (size_t i = 1; i < cmd.args.size(); ++i) {
+    for (size_t i = 1; i < cmd.invocation->words.size(); ++i) {
         const std::string description =
-            describe_command_type(state, cmd.args[i]);
+            describe_command_type(state, cmd.invocation->words[i].text);
         if (description.empty()) {
-            std::cerr << "type: " << cmd.args[i] << ": not found\n";
+            shell::diagnostics::add_error(
+                diagnostics, cmd.invocation->words[i].span,
+                "type: " + cmd.invocation->words[i].text + " not found");
             status = 1;
             continue;
         }
@@ -198,38 +209,46 @@ int run_type(shell::ShellState &state, const parser::Command &cmd) {
     return status;
 }
 
-int run_help(shell::ShellState &, const parser::Command &cmd);
+int run_help(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+             std::vector<shell::diagnostics::Diagnostic> &diagnostics);
 
-int run_source(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() != 2) {
-        std::cerr << "source: unexpected arguments\n";
+int run_source(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+               std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    if (cmd.invocation->words.size() != 2) {
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "source: unexpected arguments");
         return 1;
     }
 
-    return source_file(state, cmd.args[1], false);
+    return source_file(state, cmd.invocation->words[1].text, false);
 }
 
-int run_history(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() > 2) {
-        std::cerr << "history: unexpected arguments\n";
+int run_history(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+                std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    if (cmd.invocation->words.size() > 2) {
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "history: unexpected arguments");
         return 1;
     }
 
     size_t start = 0;
-    if (cmd.args.size() == 2) {
+    if (cmd.invocation->words.size() == 2) {
         int count = 0;
         try {
-            count = std::stoi(cmd.args[1]);
+            count = std::stoi(cmd.invocation->words[1].text);
         } catch (const std::invalid_argument &) {
-            std::cerr << "history: invalid argument" << std::endl;
+            shell::diagnostics::add_error(diagnostics, cmd.span,
+                                          "history: invalid argument");
             return 1;
         } catch (const std::out_of_range &) {
-            std::cerr << "history: number out of range" << std::endl;
+            shell::diagnostics::add_error(diagnostics, cmd.span,
+                                          "history: invalid number");
             return 1;
         }
 
         if (count < 0) {
-            std::cerr << "history: invalid argument" << std::endl;
+            shell::diagnostics::add_error(diagnostics, cmd.span,
+                                          "history: invalid argument");
             return 1;
         }
 
@@ -245,9 +264,11 @@ int run_history(shell::ShellState &state, const parser::Command &cmd) {
     return 0;
 }
 
-int run_ps(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() != 1) {
-        std::cerr << "ps: unexpected arguments\n";
+int run_ps(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+           std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    if (cmd.invocation->words.size() != 1) {
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "ps: unexpected arguments");
         return 1;
     }
 
@@ -261,33 +282,41 @@ int run_ps(shell::ShellState &state, const parser::Command &cmd) {
     return 0;
 }
 
-int run_kill(shell::ShellState &state, const parser::Command &cmd) {
-    if (cmd.args.size() != 3) {
-        std::cerr << "kill: unexpected arguments\n";
+int run_kill(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+             std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    if (cmd.invocation->words.size() != 3) {
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "kill: unexpected arguments");
         return 1;
     }
 
     int signal_number = 0;
     pid_t pid = 0;
     try {
-        signal_number = std::stoi(cmd.args[2]);
-        pid = std::stoi(cmd.args[1]);
+        signal_number = std::stoi(cmd.invocation->words[2].text);
+        pid = std::stoi(cmd.invocation->words[1].text);
     } catch (const std::invalid_argument &) {
-        std::cerr << "kill: invalid argument" << std::endl;
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "kill: invalid arguments");
         return 1;
     } catch (const std::out_of_range &) {
-        std::cerr << "kill: number out of range" << std::endl;
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "kill: number out of range");
         return 1;
     }
 
     const process::ProcessInfo *proc = process::find_process(state, pid);
     if (proc == nullptr) {
-        std::cerr << "kill: process with PID " << pid << " not found\n";
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "kill: process with PID " +
+                                          std::to_string(pid) + " not found");
         return 1;
     }
 
     if (!proc->running) {
-        std::cerr << "kill: process with PID " << pid << " not running\n";
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "kill: process with PID " +
+                                          std::to_string(pid) + " not running");
         return 1;
     }
 
@@ -300,13 +329,11 @@ int run_kill(shell::ShellState &state, const parser::Command &cmd) {
     return 0;
 }
 
-int run_alias(shell::ShellState &state, const parser::Command &cmd) {
-    return (cmd.args.size() == 1) ? run_alias_list(state, cmd)
-                                  : run_alias_manage(state, cmd);
-}
-
-int run_unalias(shell::ShellState &state, const parser::Command &cmd) {
-    return run_alias_manage(state, cmd);
+int run_alias(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+              std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    return (cmd.invocation->words.size() == 1)
+               ? run_alias_list(state, cmd, diagnostics)
+               : run_alias_manage(state, cmd, diagnostics);
 }
 
 const std::array<BuiltinSpec, 14> &builtin_specs() {
@@ -322,7 +349,7 @@ const std::array<BuiltinSpec, 14> &builtin_specs() {
         {"kill", BuiltinKind::Kill, run_kill,
          "send a signal to a tracked process"},
         {"alias", BuiltinKind::Alias, run_alias, "list or create aliases"},
-        {"unalias", BuiltinKind::Unalias, run_unalias, "remove an alias"},
+        {"unalias", BuiltinKind::Unalias, run_alias_manage, "remove an alias"},
         {"set", BuiltinKind::Set, env::run_set, "list shell variables"},
         {"export", BuiltinKind::Export, env::run_export,
          "list or export variables"},
@@ -342,17 +369,8 @@ const BuiltinSpec *find_builtin_spec(std::string_view name) {
     return nullptr;
 }
 
-const BuiltinSpec *find_builtin_spec(BuiltinKind kind) {
-    for (const BuiltinSpec &spec : builtin_specs()) {
-        if (spec.kind == kind) {
-            return &spec;
-        }
-    }
-
-    return nullptr;
-}
-
-bool can_run_builtin_in_child(const parser::Command &cmd, BuiltinKind kind) {
+bool can_run_builtin_in_child(const parser::ast::SimpleCommand &cmd,
+                              BuiltinKind kind) {
     switch (kind) {
     case BuiltinKind::Pwd:
     case BuiltinKind::Type:
@@ -363,7 +381,7 @@ bool can_run_builtin_in_child(const parser::Command &cmd, BuiltinKind kind) {
         return true;
     case BuiltinKind::Alias:
     case BuiltinKind::Export:
-        return cmd.args.size() == 1;
+        return cmd.invocation && cmd.invocation->words.size() == 1;
     case BuiltinKind::None:
     case BuiltinKind::Exit:
     case BuiltinKind::Cd:
@@ -377,9 +395,11 @@ bool can_run_builtin_in_child(const parser::Command &cmd, BuiltinKind kind) {
     return false;
 }
 
-int run_help(shell::ShellState &, const parser::Command &cmd) {
-    if (cmd.args.size() != 1) {
-        std::cerr << "help: unexpected arguments\n";
+int run_help(shell::ShellState &, const parser::ast::SimpleCommand &cmd,
+             std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    if (cmd.invocation->words.size() != 1) {
+        shell::diagnostics::add_error(diagnostics, cmd.span,
+                                      "help: unexpected arguments");
         return 1;
     }
 
@@ -392,12 +412,6 @@ int run_help(shell::ShellState &, const parser::Command &cmd) {
 }
 
 } // namespace
-
-int source_stream(shell::ShellState &state, std::istream &stream) {
-    shell::ExecuteOptions options{};
-    options.save_history = false;
-    return shell::execute_stream(state, stream, options);
-}
 
 int source_file(shell::ShellState &state, const std::string &path,
                 bool silent_missing) {
@@ -418,15 +432,18 @@ int source_file(shell::ShellState &state, const std::string &path,
         return 1;
     }
 
-    return source_stream(state, file);
+    shell::ExecuteOptions options{};
+    options.save_history = false;
+    return shell::execute_stream(state, file, options);
 }
 
-BuiltinPlan plan_builtin(const parser::Command &cmd, ExecContext ctx) {
-    if (cmd.args.empty()) {
+BuiltinPlan plan_builtin(const parser::ast::SimpleCommand &cmd,
+                         ExecContext ctx) {
+    if (!cmd.invocation || cmd.invocation->words.empty()) {
         return BuiltinPlan{BuiltinKind::None, BuiltinDecision::External};
     }
 
-    const BuiltinSpec *spec = find_builtin_spec(cmd.args[0]);
+    const BuiltinSpec *spec = find_builtin_spec(cmd.invocation->words[0].text);
     if (spec == nullptr) {
         return BuiltinPlan{BuiltinKind::None, BuiltinDecision::External};
     }
@@ -442,14 +459,16 @@ BuiltinPlan plan_builtin(const parser::Command &cmd, ExecContext ctx) {
     return BuiltinPlan{spec->kind, BuiltinDecision::Reject};
 }
 
-int run_builtin(shell::ShellState &state, const parser::Command &cmd,
-                BuiltinKind kind) {
-    const BuiltinSpec *spec = find_builtin_spec(kind);
-    if (spec == nullptr) {
-        return -1;
+int run_builtin(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
+                BuiltinKind kind,
+                std::vector<shell::diagnostics::Diagnostic> &diagnostics) {
+    for (const BuiltinSpec &spec : builtin_specs()) {
+        if (spec.kind == kind) {
+            return spec.run(state, cmd, diagnostics);
+        }
     }
 
-    return spec->run(state, cmd);
+    return -1;
 }
 
 bool is_builtin_name(const std::string &name) {

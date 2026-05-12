@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <vector>
 
 #include "../../builtins/builtins.hpp"
 #include "../../builtins/env/envexec/envexec.hpp"
@@ -14,10 +15,6 @@
 
 namespace shell::exec {
 namespace {
-
-bool is_assignment_only_command(const parser::Command &cmd) {
-    return cmd.args.empty() && !cmd.assignments.empty();
-}
 
 struct SavedStdio {
     int stdin_fd = -1;
@@ -31,12 +28,12 @@ struct EnvironmentBlock {
     bool has_path_override = false;
 };
 
-std::vector<char *> build_argv(const std::vector<std::string> &args) {
+std::vector<char *> build_argv(const std::vector<parser::ast::Word> &args) {
     std::vector<char *> argv;
     argv.reserve(args.size() + 1);
 
-    for (auto &s : args) {
-        argv.push_back(const_cast<char *>(s.c_str()));
+    for (const parser::ast::Word &s : args) {
+        argv.push_back(const_cast<char *>(s.text.c_str()));
     }
 
     argv.push_back(nullptr);
@@ -45,7 +42,7 @@ std::vector<char *> build_argv(const std::vector<std::string> &args) {
 
 EnvironmentBlock
 build_envp(const ShellState &state,
-           const std::vector<parser::Assignment> &assignments) {
+           const std::vector<parser::ast::Assignment> &assignments) {
     std::unordered_map<std::string, std::string> env_map;
     env_map.reserve(state.variables.size() + assignments.size());
 
@@ -56,10 +53,10 @@ build_envp(const ShellState &state,
     }
 
     EnvironmentBlock block{};
-    for (const parser::Assignment &assignment : assignments) {
-        env_map[assignment.name] = assignment.value;
-        if (assignment.name == "PATH") {
-            block.path_override = assignment.value;
+    for (const parser::ast::Assignment &assignment : assignments) {
+        env_map[assignment.name.text] = assignment.value.text;
+        if (assignment.name.text == "PATH") {
+            block.path_override = assignment.value.text;
             block.has_path_override = true;
         }
     }
@@ -79,9 +76,32 @@ build_envp(const ShellState &state,
     return block;
 }
 
-bool apply_redirections(const parser::Command &cmd) {
-    if (!cmd.input_file.empty()) {
-        int fd = open(cmd.input_file.c_str(), O_RDONLY);
+struct redirects {
+    std::string input_file{};
+    std::string output_file{};
+    bool append_output = false;
+};
+
+bool apply_redirections(const parser::ast::SimpleCommand &cmd) {
+    redirects redirects{};
+
+    for (auto &red : cmd.redirects) {
+        switch (red.kind) {
+        case parser::ast::RedirectKind::Input:
+            redirects.input_file = red.target.text;
+            break;
+        case parser::ast::RedirectKind::Output:
+            redirects.output_file = red.target.text;
+            break;
+        case parser::ast::RedirectKind::AppendOutput:
+            redirects.output_file = red.target.text;
+            redirects.append_output = true;
+            break;
+        }
+    }
+
+    if (!redirects.input_file.empty()) {
+        int fd = open(redirects.input_file.c_str(), O_RDONLY);
         if (fd == -1) {
             perror("open input");
             return false;
@@ -96,15 +116,15 @@ bool apply_redirections(const parser::Command &cmd) {
         close(fd);
     }
 
-    if (!cmd.output_file.empty()) {
+    if (!redirects.output_file.empty()) {
         int fd;
 
-        if (cmd.append_output) {
-            fd = open(cmd.output_file.c_str(), O_WRONLY | O_CREAT | O_APPEND,
-                      0644);
+        if (redirects.append_output) {
+            fd = open(redirects.output_file.c_str(),
+                      O_WRONLY | O_CREAT | O_APPEND, 0644);
         } else {
-            fd = open(cmd.output_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC,
-                      0644);
+            fd = open(redirects.output_file.c_str(),
+                      O_WRONLY | O_CREAT | O_TRUNC, 0644);
         }
 
         if (fd == -1) {
@@ -151,10 +171,30 @@ int cleanup_failed_pipeline_start(ShellState &state,
     return 1;
 }
 
-int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
-                      bool background) {
+std::string command_name(const parser::ast::SimpleCommand &cmd) {
+    if (!cmd.invocation || cmd.invocation->words.empty()) {
+        return "";
+    }
+
+    std::string name;
+    for (const parser::ast::Word &word : cmd.invocation->words) {
+        if (!name.empty()) {
+            name += ' ';
+        }
+        name += word.text;
+    }
+
+    return name;
+}
+
+} // namespace
+
+int run_pipeline(ShellState &state, const parser::ast::Pipeline &pipe,
+                 bool background,
+                 std::vector<diagnostics::Diagnostic> &diagnostics) {
     if (pipe.commands.empty()) {
-        std::cerr << "how did we get here?\n";
+        diagnostics::add_error(diagnostics, pipe.span,
+                               "internal error: empty pipeline");
         return 1;
     }
 
@@ -176,7 +216,7 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
     pid_t pipeline_pgid = -1;
 
     for (size_t i = 0; i < n; ++i) {
-        const parser::Command &cmd = pipe.commands[i];
+        const parser::ast::SimpleCommand &cmd = pipe.commands[i];
 
         pid_t pid = fork();
         if (pid < 0) {
@@ -216,7 +256,7 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
                 _exit(1);
             }
 
-            if (is_assignment_only_command(cmd)) {
+            if (!cmd.invocation) {
                 builtins::env::apply_temporary_assignments(state,
                                                            cmd.assignments);
                 std::cout.flush();
@@ -237,15 +277,26 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
                     builtins::env::apply_temporary_assignments(state,
                                                                cmd.assignments);
                 }
-                int status = builtins::run_builtin(state, cmd, plan.kind);
+                const size_t diagnostic_count = diagnostics.size();
+                int status =
+                    builtins::run_builtin(state, cmd, plan.kind, diagnostics);
+                for (size_t j = diagnostic_count; j < diagnostics.size(); ++j) {
+                    const diagnostics::Diagnostic &diagnostic = diagnostics[j];
+                    const char *label =
+                        diagnostic.severity ==
+                                diagnostics::DiagnosticSeverity::Warning
+                            ? "warning"
+                            : "error";
+                    std::cerr << label << ": " << diagnostic.message << '\n';
+                }
                 std::cout.flush();
                 std::cerr.flush();
                 _exit(status < 0 ? 1 : status);
             }
 
             if (plan.decision == builtins::BuiltinDecision::Reject) {
-                std::cerr << cmd.args[0] << ": cannot run in this context\n";
-                std::cerr.flush();
+                std::cerr << command_name(cmd)
+                          << ": cannot run in this context\n";
                 _exit(2);
             }
 
@@ -264,7 +315,7 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
                 _exit(1);
             }
 
-            std::vector<char *> argv = build_argv(cmd.args);
+            std::vector<char *> argv = build_argv(cmd.invocation->words);
             execvpe(argv[0], argv.data(), env.envp.data());
             perror(argv[0]);
             _exit(1);
@@ -279,7 +330,8 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
         }
 
         pids.push_back(pid);
-        process::add_process(state, pid, pipeline_pgid, cmd.raw, background);
+        process::add_process(state, pid, pipeline_pgid, command_name(cmd),
+                             background);
     }
 
     close_pipe_fds(fds);
@@ -301,6 +353,8 @@ int run_pipeline_impl(ShellState &state, const parser::Pipeline &pipe,
     signals::g_foreground_pgid = -1;
     return status;
 }
+
+namespace {
 
 bool save_stdio(SavedStdio &saved) {
     saved = SavedStdio{};
@@ -340,20 +394,14 @@ void restore_stdio(const SavedStdio &saved) {
 
 } // namespace
 
-int run_pipeline(ShellState &state, const parser::Pipeline &pipe,
-                 bool background) {
-    return run_pipeline_impl(state, pipe, background);
-}
-
-int run_parent_assignments_with_redirections(ShellState &state,
-                                             const parser::Command &cmd) {
+int run_parent_assignments_with_redirections(
+    ShellState &state, const parser::ast::SimpleCommand &cmd) {
     SavedStdio saved{};
     if (!save_stdio(saved)) {
         return 1;
     }
 
     std::cout.flush();
-    std::cerr.flush();
 
     if (!apply_redirections(cmd)) {
         restore_stdio(saved);
@@ -363,22 +411,21 @@ int run_parent_assignments_with_redirections(ShellState &state,
     builtins::env::apply_persistent_assignments(state, cmd.assignments);
 
     std::cout.flush();
-    std::cerr.flush();
 
     restore_stdio(saved);
     return 0;
 }
 
-int run_parent_builtin_with_redirections(ShellState &state,
-                                         const parser::Command &cmd,
-                                         const builtins::BuiltinPlan &plan) {
+int run_parent_builtin_with_redirections(
+    ShellState &state, const parser::ast::SimpleCommand &cmd,
+    const builtins::BuiltinPlan &plan,
+    std::vector<diagnostics::Diagnostic> &diagnostics) {
     SavedStdio saved{};
     if (!save_stdio(saved)) {
         return 1;
     }
 
     std::cout.flush();
-    std::cerr.flush();
 
     if (!apply_redirections(cmd)) {
         restore_stdio(saved);
@@ -391,14 +438,13 @@ int run_parent_builtin_with_redirections(ShellState &state,
             builtins::env::apply_temporary_assignments(state, cmd.assignments);
     }
 
-    int status = builtins::run_builtin(state, cmd, plan.kind);
+    int status = builtins::run_builtin(state, cmd, plan.kind, diagnostics);
 
     if (!cmd.assignments.empty()) {
         builtins::env::restore_temporary_assignments(state, snapshot);
     }
 
     std::cout.flush();
-    std::cerr.flush();
 
     restore_stdio(saved);
 

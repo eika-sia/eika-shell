@@ -343,9 +343,9 @@ LexResult lex(const std::string &source, LexMode mode) {
                 in_single_quote ? single_quote_start : double_quote_start;
             const size_t span_start =
                 quote_start == std::string::npos ? current_start : quote_start;
-            diagnostics::add_error(result.diagnostics,
-                                   SourceSpan{span_start, current_end},
-                                   "syntax error: unmatched quote");
+            shell::diagnostics::add_error(result.diagnostics,
+                                          SourceSpan{span_start, current_end},
+                                          "syntax error: unmatched quote");
         } else {
             flush_word(result.tokens, current, source, current_start,
                        current_end, command_context, expecting_redirect_target);
