@@ -14,21 +14,21 @@ namespace parser::ast {
 
 struct Identifier {
     std::string text;
-    std::string raw_text;
-    SourceSpan span;
+    std::string raw_text{};
+    SourceSpan span{};
 };
 
 struct Word {
     std::string text;
-    std::string raw_text;
-    SourceSpan span;
+    std::string raw_text{};
+    SourceSpan span{};
 };
 
 struct Assignment {
     Identifier name;
     Word value;
-    SourceSpan equals_span;
-    SourceSpan span;
+    SourceSpan equals_span{};
+    SourceSpan span{};
 };
 
 enum class RedirectKind {

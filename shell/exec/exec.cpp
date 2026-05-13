@@ -3,15 +3,12 @@
 #include <array>
 #include <fcntl.h>
 #include <iostream>
-#include <signal.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
 
 #include "../../builtins/builtins.hpp"
 #include "../../builtins/env/envexec/envexec.hpp"
-#include "../signals/signals.hpp"
-#include "../terminal/terminal.hpp"
 
 namespace shell::exec {
 namespace {
@@ -82,6 +79,8 @@ struct redirects {
     bool append_output = false;
 };
 
+} // namespace
+
 bool apply_redirections(const parser::ast::SimpleCommand &cmd) {
     redirects redirects{};
 
@@ -144,6 +143,28 @@ bool apply_redirections(const parser::ast::SimpleCommand &cmd) {
     return true;
 }
 
+void apply_child_pipes(size_t index, size_t count,
+                       const std::vector<std::array<int, 2>> &fds) {
+    if (index > 0) {
+        if (dup2(fds[index - 1][0], STDIN_FILENO) == -1) {
+            perror("dup2 stdin");
+            _exit(1);
+        }
+    }
+
+    if (index + 1 < count) {
+        if (dup2(fds[index][1], STDOUT_FILENO) == -1) {
+            perror("dup2 stdout");
+            _exit(1);
+        }
+    }
+
+    for (auto &fdpair : fds) {
+        close(fdpair[0]);
+        close(fdpair[1]);
+    }
+}
+
 void close_pipe_fds(std::vector<std::array<int, 2>> &fds) {
     for (std::array<int, 2> &fdpair : fds) {
         if (fdpair[0] != -1) {
@@ -157,201 +178,26 @@ void close_pipe_fds(std::vector<std::array<int, 2>> &fds) {
     }
 }
 
-int cleanup_failed_pipeline_start(ShellState &state,
-                                  std::vector<std::array<int, 2>> &fds,
-                                  const std::vector<pid_t> &pids,
-                                  pid_t pipeline_pgid) {
-    close_pipe_fds(fds);
-
-    if (pipeline_pgid > 0) {
-        kill(-pipeline_pgid, SIGTERM);
+[[noreturn]] void exec_external(ShellState &state,
+                                const parser::ast::SimpleCommand &cmd) {
+    if (!cmd.invocation) {
+        builtins::env::apply_temporary_assignments(state, cmd.assignments);
+        std::cout.flush();
+        std::cerr.flush();
+        _exit(0);
     }
 
-    process::wait_for_processes(state, pids);
-    return 1;
-}
-
-std::string command_name(const parser::ast::SimpleCommand &cmd) {
-    if (!cmd.invocation || cmd.invocation->words.empty()) {
-        return "";
+    EnvironmentBlock env = build_envp(state, cmd.assignments);
+    if (env.has_path_override &&
+        setenv("PATH", env.path_override.c_str(), 1) == -1) {
+        perror("setenv PATH");
+        _exit(1);
     }
 
-    std::string name;
-    for (const parser::ast::Word &word : cmd.invocation->words) {
-        if (!name.empty()) {
-            name += ' ';
-        }
-        name += word.text;
-    }
-
-    return name;
-}
-
-} // namespace
-
-int run_pipeline(ShellState &state, const parser::ast::Pipeline &pipe,
-                 bool background,
-                 std::vector<diagnostics::Diagnostic> &diagnostics) {
-    if (pipe.commands.empty()) {
-        diagnostics::add_error(diagnostics, pipe.span,
-                               "internal error: empty pipeline");
-        return 1;
-    }
-
-    const size_t n = pipe.commands.size();
-    std::vector<std::array<int, 2>> fds;
-
-    if (n > 1) {
-        fds.assign(n - 1, std::array<int, 2>{-1, -1});
-        for (size_t i = 0; i < n - 1; ++i) {
-            if (::pipe(fds[i].data()) == -1) {
-                perror("pipe");
-                close_pipe_fds(fds);
-                return 1;
-            }
-        }
-    }
-
-    std::vector<pid_t> pids;
-    pid_t pipeline_pgid = -1;
-
-    for (size_t i = 0; i < n; ++i) {
-        const parser::ast::SimpleCommand &cmd = pipe.commands[i];
-
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork");
-            return cleanup_failed_pipeline_start(state, fds, pids,
-                                                 pipeline_pgid);
-        }
-
-        if (pid == 0) {
-            // prva komanda je group leader
-            if (pipeline_pgid == -1) {
-                setpgid(0, 0);
-            } else {
-                setpgid(0, pipeline_pgid);
-            }
-
-            if (i > 0) {
-                if (dup2(fds[i - 1][0], STDIN_FILENO) == -1) {
-                    perror("dup2 stdin");
-                    _exit(1);
-                }
-            }
-
-            if (i + 1 < n) {
-                if (dup2(fds[i][1], STDOUT_FILENO) == -1) {
-                    perror("dup2 stdout");
-                    _exit(1);
-                }
-            }
-
-            for (auto &fdpair : fds) {
-                close(fdpair[0]);
-                close(fdpair[1]);
-            }
-
-            if (!apply_redirections(cmd)) {
-                _exit(1);
-            }
-
-            if (!cmd.invocation) {
-                builtins::env::apply_temporary_assignments(state,
-                                                           cmd.assignments);
-                std::cout.flush();
-                std::cerr.flush();
-                _exit(0);
-            }
-
-            // builtin pipelining
-            builtins::ExecContext ctx =
-                (n > 1) ? builtins::ExecContext::PipelineStage
-                        : (background
-                               ? builtins::ExecContext::BackgroundStandalone
-                               : builtins::ExecContext::ForegroundStandalone);
-            builtins::BuiltinPlan plan = builtins::plan_builtin(cmd, ctx);
-
-            if (plan.decision == builtins::BuiltinDecision::RunInChild) {
-                if (!cmd.assignments.empty()) {
-                    builtins::env::apply_temporary_assignments(state,
-                                                               cmd.assignments);
-                }
-                const size_t diagnostic_count = diagnostics.size();
-                int status =
-                    builtins::run_builtin(state, cmd, plan.kind, diagnostics);
-                for (size_t j = diagnostic_count; j < diagnostics.size(); ++j) {
-                    const diagnostics::Diagnostic &diagnostic = diagnostics[j];
-                    const char *label =
-                        diagnostic.severity ==
-                                diagnostics::DiagnosticSeverity::Warning
-                            ? "warning"
-                            : "error";
-                    std::cerr << label << ": " << diagnostic.message << '\n';
-                }
-                std::cout.flush();
-                std::cerr.flush();
-                _exit(status < 0 ? 1 : status);
-            }
-
-            if (plan.decision == builtins::BuiltinDecision::Reject) {
-                std::cerr << command_name(cmd)
-                          << ": cannot run in this context\n";
-                _exit(2);
-            }
-
-            if (plan.decision == builtins::BuiltinDecision::RunInParent) {
-                std::cerr
-                    << "internal error: parent-only builtin reached child\n";
-                std::cerr.flush();
-                _exit(2);
-            }
-
-            // regular child exec
-            EnvironmentBlock env = build_envp(state, cmd.assignments);
-            if (env.has_path_override &&
-                setenv("PATH", env.path_override.c_str(), 1) == -1) {
-                perror("setenv PATH");
-                _exit(1);
-            }
-
-            std::vector<char *> argv = build_argv(cmd.invocation->words);
-            execvpe(argv[0], argv.data(), env.envp.data());
-            perror(argv[0]);
-            _exit(1);
-        }
-
-        if (pipeline_pgid == -1) {
-            pipeline_pgid = pid;
-        }
-
-        if (setpgid(pid, pipeline_pgid) == -1) {
-            perror("setpgid");
-        }
-
-        pids.push_back(pid);
-        process::add_process(state, pid, pipeline_pgid, command_name(cmd),
-                             background);
-    }
-
-    close_pipe_fds(fds);
-
-    if (background) {
-        return 0;
-    }
-
-    state.foreground_pgid = pipeline_pgid;
-    signals::g_foreground_pgid = pipeline_pgid;
-
-    terminal::give_terminal_to(pipeline_pgid);
-
-    const int status = process::wait_for_processes(state, pids);
-
-    terminal::reclaim_terminal(state);
-
-    state.foreground_pgid = -1;
-    signals::g_foreground_pgid = -1;
-    return status;
+    std::vector<char *> argv = build_argv(cmd.invocation->words);
+    execvpe(argv[0], argv.data(), env.envp.data());
+    perror(argv[0]);
+    _exit(errno == ENOENT ? 127 : 126);
 }
 
 namespace {

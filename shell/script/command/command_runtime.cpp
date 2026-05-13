@@ -1,12 +1,15 @@
 #include "command_runtime.hpp"
 
-#include "../../builtins/alias/alias.hpp"
-#include "../../builtins/builtins.hpp"
-#include "../../features/expansion/expansion.hpp"
-#include "../exec/exec.hpp"
+#include "../../../builtins/alias/alias.hpp"
+#include "../../../builtins/builtins.hpp"
+#include "../../../features/expansion/expansion.hpp"
+#include "../../exec/exec.hpp"
+#include "./command_plan.hpp"
+#include "./pipeline_runtime.hpp"
 
 namespace shell::script {
 namespace {
+
 bool should_execute_pipeline(parser::ast::ChainCondition condition,
                              int previous_status) {
     switch (condition) {
@@ -21,29 +24,6 @@ bool should_execute_pipeline(parser::ast::ChainCondition condition,
     return true;
 }
 
-bool validate_pipeline_builtins(
-    const parser::ast::Pipeline &pipe,
-    std::vector<diagnostics::Diagnostic> &diagnostics) {
-    if (pipe.commands.size() <= 1) {
-        return true;
-    }
-
-    for (const parser::ast::SimpleCommand &cmd : pipe.commands) {
-        const builtins::BuiltinPlan plan =
-            builtins::plan_builtin(cmd, builtins::ExecContext::PipelineStage);
-        if (plan.decision != builtins::BuiltinDecision::Reject) {
-            continue;
-        }
-
-        diagnostics::add_error(diagnostics, cmd.span,
-                               cmd.invocation->words[0].text +
-                                   ": cannot run in this context");
-        return false;
-    }
-
-    return true;
-}
-
 int dispatch_pipeline(ShellState &state, parser::ast::Pipeline &pipe,
                       bool background,
                       std::vector<diagnostics::Diagnostic> &diagnostics) {
@@ -51,39 +31,44 @@ int dispatch_pipeline(ShellState &state, parser::ast::Pipeline &pipe,
         return 1;
     }
 
-    if (!validate_pipeline_builtins(pipe, diagnostics)) {
-        return 1;
-    }
+    std::vector<CommandPlan> plans;
+    plans.reserve(pipe.commands.size());
 
-    if (pipe.commands.size() == 1) {
-        const parser::ast::SimpleCommand &cmd = pipe.commands[0];
+    for (parser::ast::SimpleCommand &cmd : pipe.commands) {
+        const builtins::ExecContext context =
+            pipe.commands.size() > 1 ? builtins::ExecContext::PipelineStage
+            : background ? builtins::ExecContext::BackgroundStandalone
+                         : builtins::ExecContext::ForegroundStandalone;
 
-        if (!background && !cmd.invocation) {
-            // Commandless simple commands still run redirections as shell
-            // no-ops, so `A=1 >out` persists `A` and creates/truncates `out`.
-            return exec::run_parent_assignments_with_redirections(state, cmd);
-        }
-
-        const builtins::ExecContext ctx =
-            background ? builtins::ExecContext::BackgroundStandalone
-                       : builtins::ExecContext::ForegroundStandalone;
-        const builtins::BuiltinPlan plan = builtins::plan_builtin(cmd, ctx);
-
-        if (plan.decision == builtins::BuiltinDecision::RunInParent) {
-            const int status = exec::run_parent_builtin_with_redirections(
-                state, cmd, plan, diagnostics);
-            return status < 0 ? 1 : status;
-        }
-
-        if (plan.decision == builtins::BuiltinDecision::Reject) {
-            diagnostics::add_error(diagnostics, pipe.span,
-                                   cmd.invocation->words[0].text +
-                                       ": cannot run in this context");
+        CommandPlan plan = plan_command(state, cmd, context);
+        if (plan.kind == CommandKind::Reject) {
+            diagnostics::add_error(diagnostics, cmd.span, plan.reject_message);
             return 1;
         }
+
+        plans.push_back(plan);
     }
 
-    return exec::run_pipeline(state, pipe, background, diagnostics);
+    if (plans.size() == 1 && !background) {
+        CommandPlan &plan = plans[0];
+
+        if (plan.kind == CommandKind::Noop) {
+            return exec::run_parent_assignments_with_redirections(state,
+                                                                  *plan.cmd);
+        }
+
+        if (plan.kind == CommandKind::Function) {
+            return run_function(state, *plan.cmd, *plan.function, diagnostics);
+        }
+
+        if (plan.kind == CommandKind::Builtin &&
+            plan.builtin.decision == builtins::BuiltinDecision::RunInParent) {
+            return exec::run_parent_builtin_with_redirections(
+                state, *plan.cmd, plan.builtin, diagnostics);
+        }
+    }
+
+    return run_planned_pipeline(state, plans, background, diagnostics);
 }
 
 void run_command_chain(ShellState &state, parser::ast::CommandChain &chain,

@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "../parser/ast.hpp"
 #include "../process/process.hpp"
 
 namespace shell {
@@ -14,6 +15,11 @@ namespace shell {
 struct ShellVariable {
     std::string value;
     bool exported = false;
+};
+
+struct ShellFunction {
+    std::vector<std::string> params;
+    parser::ast::Block body;
 };
 
 struct ShellState {
@@ -31,6 +37,7 @@ struct ShellState {
 
     std::unordered_map<std::string, std::string> alias;
     std::unordered_map<std::string, ShellVariable> variables;
+    std::unordered_map<std::string, ShellFunction> functions;
 };
 
 struct ExecuteOptions {
