@@ -19,8 +19,6 @@ Small Unix-like shell written in C++.
 
 Available on AUR! Please install it via `eika-shell-git`
 
-Config and persistance files are not provided by aur so you need to make them yourself. Please consult a later section on that.
-
 ### Manual build
 
 ### Requirements
