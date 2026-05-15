@@ -2,13 +2,24 @@
 
 #include <unistd.h>
 
+#include "../../builtins/env/env.hpp"
+
 namespace shell::config {
 namespace {
 
 const ShellVariable *find_variable(const ShellState &state,
                                    const std::string &name) {
-    const auto it = state.variables.find(name);
-    if (it == state.variables.end()) {
+    const int scope = builtins::env::find_scope(state, name);
+
+    if (scope < 0 || static_cast<std::size_t>(scope) >= state.scopes.size()) {
+        return nullptr;
+    }
+
+    const auto &variables =
+        state.scopes[static_cast<std::size_t>(scope)].variables;
+
+    const auto it = variables.find(name);
+    if (it == variables.end()) {
         return nullptr;
     }
 

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "../../builtins/builtins.hpp"
+#include "../../builtins/env/env.hpp"
 #include "../../builtins/env/envexec/envexec.hpp"
 
 namespace shell::exec {
@@ -41,9 +42,11 @@ EnvironmentBlock
 build_envp(const ShellState &state,
            const std::vector<parser::ast::Assignment> &assignments) {
     std::unordered_map<std::string, std::string> env_map;
-    env_map.reserve(state.variables.size() + assignments.size());
+    std::unordered_map<std::string, shell::ShellVariable> flattened =
+        builtins::env::flatten_variables(state.scopes);
+    env_map.reserve(flattened.size() + assignments.size());
 
-    for (const auto &[name, variable] : state.variables) {
+    for (const auto &[name, variable] : flattened) {
         if (variable.exported) {
             env_map[name] = variable.value;
         }
@@ -78,6 +81,10 @@ struct redirects {
     std::string output_file{};
     bool append_output = false;
 };
+
+int current_scope_index(const ShellState &state) {
+    return static_cast<int>(state.scopes.size() - 1);
+}
 
 } // namespace
 
@@ -181,7 +188,8 @@ void close_pipe_fds(std::vector<std::array<int, 2>> &fds) {
 [[noreturn]] void exec_external(ShellState &state,
                                 const parser::ast::SimpleCommand &cmd) {
     if (!cmd.invocation) {
-        builtins::env::apply_temporary_assignments(state, cmd.assignments);
+        builtins::env::apply_temporary_assignments(state, cmd.assignments,
+                                                   current_scope_index(state));
         std::cout.flush();
         std::cerr.flush();
         _exit(0);
@@ -241,7 +249,8 @@ void restore_stdio(const SavedStdio &saved) {
 } // namespace
 
 int run_parent_assignments_with_redirections(
-    ShellState &state, const parser::ast::SimpleCommand &cmd) {
+    ShellState &state, const parser::ast::SimpleCommand &cmd,
+    std::vector<diagnostics::Diagnostic> &diagnostics) {
     SavedStdio saved{};
     if (!save_stdio(saved)) {
         return 1;
@@ -254,12 +263,12 @@ int run_parent_assignments_with_redirections(
         return 1;
     }
 
-    builtins::env::apply_persistent_assignments(state, cmd.assignments);
+    const int status = builtins::env::run_update_value(state, cmd, diagnostics);
 
     std::cout.flush();
 
     restore_stdio(saved);
-    return 0;
+    return status;
 }
 
 int run_parent_builtin_with_redirections(
@@ -280,14 +289,15 @@ int run_parent_builtin_with_redirections(
 
     builtins::env::AssignmentSnapshot snapshot;
     if (!cmd.assignments.empty()) {
-        snapshot =
-            builtins::env::apply_temporary_assignments(state, cmd.assignments);
+        snapshot = builtins::env::apply_temporary_assignments(
+            state, cmd.assignments, current_scope_index(state));
     }
 
     int status = builtins::run_builtin(state, cmd, plan.kind, diagnostics);
 
     if (!cmd.assignments.empty()) {
-        builtins::env::restore_temporary_assignments(state, snapshot);
+        builtins::env::restore_temporary_assignments(
+            state, snapshot, current_scope_index(state));
     }
 
     std::cout.flush();

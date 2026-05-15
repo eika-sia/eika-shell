@@ -22,6 +22,7 @@ enum class BuiltinKind {
     Alias,
     Unalias,
     Set,
+    Let,
     Export,
     Unset
 };

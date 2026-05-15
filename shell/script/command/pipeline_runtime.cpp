@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <vector>
 
-#include "../../../builtins/env/envexec/envexec.hpp"
+#include "../../../builtins/env/env.hpp"
 #include "../../../process/process.hpp"
 #include "../../exec/exec.hpp"
 #include "../../signals/signals.hpp"
@@ -50,7 +50,7 @@ std::string command_name(const parser::ast::SimpleCommand &cmd) {
 }
 
 void print_child_diagnostic(std::vector<diagnostics::Diagnostic> diagnostics,
-                            int diagnostic_count) {
+                            size_t diagnostic_count) {
     for (size_t j = diagnostic_count; j < diagnostics.size(); ++j) {
         const diagnostics::Diagnostic &diagnostic = diagnostics[j];
         std::string label =
@@ -68,22 +68,24 @@ void print_child_diagnostic(std::vector<diagnostics::Diagnostic> diagnostics,
 int run_function(ShellState &state, const parser::ast::SimpleCommand &cmd,
                  const ShellFunction &function,
                  std::vector<diagnostics::Diagnostic> &diagnostics) {
-    int named_param_count =
+    size_t named_param_count =
         std::min(function.params.size(), cmd.invocation->words.size() - 1);
     std::vector<parser::ast::Assignment> assigns;
-    for (int i = 0; i < named_param_count; ++i) {
+    for (size_t i = 0; i < named_param_count; ++i) {
         assigns.push_back(parser::ast::Assignment{
             parser::ast::Identifier{function.params[i], ""},
             parser::ast::Word{cmd.invocation->words[i + 1].text}});
     }
-    builtins::env::AssignmentSnapshot assign_snapshot =
-        builtins::env::apply_temporary_assignments(state, assigns);
+    state.scopes.push_back({});
+    for (const parser::ast::Assignment &assign : assigns) {
+        state.scopes.back().variables[assign.name.text] =
+            ShellVariable{assign.value.text, false};
+    }
 
     InterpretResult body_res =
         interpret_block(state, function.body, diagnostics);
 
-    builtins::env::restore_temporary_assignments(state, assign_snapshot);
-
+    state.scopes.pop_back();
     return body_res.status;
 }
 
@@ -138,11 +140,11 @@ int run_planned_pipeline(ShellState &state,
 
             switch (plans[i].kind) {
             case CommandKind::Noop:
-                builtins::env::apply_temporary_assignments(
-                    state, plans[i].cmd->assignments);
+                status = builtins::env::run_update_value(state, *plans[i].cmd,
+                                                         diagnostics);
                 std::cout.flush();
                 std::cerr.flush();
-                _exit(0);
+                _exit(status);
             case CommandKind::Function:
                 status = run_function(state, *plans[i].cmd, *plans[i].function,
                                       diagnostics);

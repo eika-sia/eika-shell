@@ -149,21 +149,35 @@ let name = "hello world"
 echo "$name"
 ```
 
-#### Assignment
+#### Assignment And Scope
 
-The shell currently supports assignment words and `set` / `export`.
-
-For scripts, a clearer assignment form is added:
+Variable mutation is intentionally explicit:
 
 ```esh
-let name = value
-let dir = "$HOME/code"
-let here = $(pwd)
+let name=value          # declare in the current shell scope
+name=value              # mutate the nearest existing shell variable
+set name=value          # create or update a global shell variable
+export name=value       # create or update a global exported variable
+with NAME=value command # run an external command with temporary child env
 ```
 
-Why `let`:
-- It is explicit.
-- It does not conflict with current `set` behavior.
+Rules:
+- `let name=value` creates a variable in the current scope.
+- `let` fails if the variable already exists in the current scope.
+- `name=value` does not create a variable.
+- `name=value` mutates the nearest existing variable with that name.
+- `name=value` fails if no shell variable with that name exists.
+- `set name=value` writes the global shell scope.
+- `set name` copies the nearest existing variable into global scope.
+- `export name=value` writes the global shell scope and marks the variable as exported.
+- `export name` exports the nearest existing variable and moves it to global scope.
+- `with NAME=value command` does not mutate shell state.
+- `with` is for external commands only, because it describes a child-process environment.
+
+Why this model:
+- Creation and mutation are separate operations.
+- Local shell state and child-process environment are separate operations.
+- Scripts become easier to read because assignment intent is visible at the command site.
 
 ### Quoting
 
@@ -406,13 +420,19 @@ block              -> statement_list?
 
 command_chain      -> pipeline (("&&" | "||") pipeline)*
 pipeline           -> simple_command ("|" simple_command)*
-simple_command     -> command_prefix+ command_invocation?
+simple_command     -> assignment_mutation
+                    | with_command
                     | command_invocation
+
+assignment_mutation -> command_prefix+ redirect*
+
+with_command       -> "with" with_assignment+ command_invocation redirect*
 
 command_invocation -> command_word command_suffix*
 
 command_prefix     -> assignment_word | redirect
 command_suffix     -> word | redirect
+with_assignment    -> IDENT "=" word
 
 redirect           -> "<" word | ">" word | ">>" word
 word_list          -> word*
@@ -420,6 +440,8 @@ terminator         -> NEWLINE | ";"
 ```
 
 The lexer should only recognize `assignment_word` while reading the command prefix. Once a real `command_word` has been consumed, every later token is parsed as a normal `word`, even if it looks like `IDENT=value`.
+
+`with` is the deliberate exception. After the parser sees command-start `with`, it parses following `IDENT=value` words as temporary child-environment assignments. This keeps legacy `IDENT=value command` invalid while giving temporary environment execution an explicit syntax node.
 
 ## Runtime Architecture
 

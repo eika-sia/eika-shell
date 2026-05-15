@@ -55,7 +55,8 @@ std::string get_shell_pwd(const shell::ShellState &state) {
 bool update_directory_variables(shell::ShellState &state,
                                 const std::string &old_pwd) {
     if (!old_pwd.empty()) {
-        state.variables["OLDPWD"] = shell::ShellVariable{old_pwd, false};
+        state.scopes[0].variables["OLDPWD"] =
+            shell::ShellVariable{old_pwd, false};
     }
 
     const std::string new_pwd = get_current_working_directory();
@@ -63,7 +64,7 @@ bool update_directory_variables(shell::ShellState &state,
         return false;
     }
 
-    env::set_shell_variable(state, "PWD", new_pwd);
+    env::set_shell_variable(state, "PWD", new_pwd, 0);
     return true;
 }
 
@@ -336,8 +337,8 @@ int run_alias(shell::ShellState &state, const parser::ast::SimpleCommand &cmd,
                : run_alias_manage(state, cmd, diagnostics);
 }
 
-const std::array<BuiltinSpec, 14> &builtin_specs() {
-    static const std::array<BuiltinSpec, 14> specs{{
+const std::array<BuiltinSpec, 15> &builtin_specs() {
+    static const std::array<BuiltinSpec, 15> specs{{
         {"exit", BuiltinKind::Exit, run_exit, "exit the shell"},
         {"cd", BuiltinKind::Cd, run_cd, "change the working directory"},
         {"pwd", BuiltinKind::Pwd, run_pwd, "print the working directory"},
@@ -351,6 +352,7 @@ const std::array<BuiltinSpec, 14> &builtin_specs() {
         {"alias", BuiltinKind::Alias, run_alias, "list or create aliases"},
         {"unalias", BuiltinKind::Unalias, run_alias_manage, "remove an alias"},
         {"set", BuiltinKind::Set, env::run_set, "list shell variables"},
+        {"let", BuiltinKind::Let, env::run_let, "list shell variables"},
         {"export", BuiltinKind::Export, env::run_export,
          "list or export variables"},
         {"unset", BuiltinKind::Unset, env::run_unset, "remove shell variables"},
@@ -378,6 +380,7 @@ bool can_run_builtin_in_child(const parser::ast::SimpleCommand &cmd,
     case BuiltinKind::History:
     case BuiltinKind::Ps:
     case BuiltinKind::Set:
+    case BuiltinKind::Let:
         return true;
     case BuiltinKind::Alias:
     case BuiltinKind::Export:

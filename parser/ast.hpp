@@ -58,6 +58,7 @@ struct CommandInvocation {
 };
 
 struct SimpleCommand {
+    bool explicit_with = false;
     std::vector<Assignment> assignments;
     std::optional<CommandInvocation> invocation;
     std::vector<Redirect> redirects;

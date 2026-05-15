@@ -53,8 +53,8 @@ int dispatch_pipeline(ShellState &state, parser::ast::Pipeline &pipe,
         CommandPlan &plan = plans[0];
 
         if (plan.kind == CommandKind::Noop) {
-            return exec::run_parent_assignments_with_redirections(state,
-                                                                  *plan.cmd);
+            return exec::run_parent_assignments_with_redirections(
+                state, *plan.cmd, diagnostics);
         }
 
         if (plan.kind == CommandKind::Function) {

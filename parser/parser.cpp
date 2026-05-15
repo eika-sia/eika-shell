@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "../shell/diagnostics/diagnostics.hpp"
+#include "./assignments/assignment.hpp"
 #include "./lexer/lexer.hpp"
 #include "ast.hpp"
 
@@ -118,7 +119,7 @@ std::optional<Token> consume_keyword(ParserState &p, const std::string &keyword,
 
 bool is_reserved_word(const std::string &text) {
     return text == "fn" || text == "if" || text == "else" || text == "while" ||
-           text == "for" || text == "in" || text == "hook" ||
+           text == "for" || text == "in" || text == "with" || text == "hook" ||
            text == "return" || text == "break" || text == "continue" ||
            text == "end";
 }
@@ -237,6 +238,35 @@ std::optional<ast::Assignment> parse_assignment(ParserState &p) {
     return assignment;
 }
 
+std::optional<ast::Assignment> assignment_from_word(const ast::Word &word) {
+    std::string name;
+    std::string value;
+    if (!split_assignment_expression(word.text, name, value)) {
+        return std::nullopt;
+    }
+
+    const size_t equals = word.text.find('=');
+    const size_t raw_equals = word.raw_text.find('=');
+    const size_t span_equals =
+        raw_equals == std::string::npos ? equals : raw_equals;
+
+    ast::Assignment assignment{};
+    assignment.name = ast::Identifier{
+        name,
+        raw_equals == std::string::npos ? name
+                                        : word.raw_text.substr(0, raw_equals),
+        SourceSpan{word.span.start, word.span.start + span_equals}};
+    assignment.value = ast::Word{
+        value,
+        raw_equals == std::string::npos ? value
+                                        : word.raw_text.substr(raw_equals + 1),
+        SourceSpan{word.span.start + span_equals + 1, word.span.end}};
+    assignment.equals_span = SourceSpan{word.span.start + span_equals,
+                                        word.span.start + span_equals + 1};
+    assignment.span = word.span;
+    return assignment;
+}
+
 std::optional<ast::Redirect> parse_redirect(ParserState &p) {
     if (at_end(p) || !is_redirect(peek(p).kind)) {
         return std::nullopt;
@@ -324,9 +354,88 @@ void parse_call_arguments(ParserState &p, ast::CommandInvocation &invocation,
     }
 }
 
+void parse_command_word(ParserState &p, ast::SimpleCommand &command,
+                        std::optional<SourceSpan> &span) {
+    ast::Word word = make_word(advance(p));
+    include_span(span, word.span);
+
+    if (!command.invocation) {
+        const bool paren_call = check(p, TokenKind::LeftParen) &&
+                                word.span.end == peek(p).span.start;
+        ast::CommandInvocation invocation{};
+        invocation.style = paren_call ? ast::CommandInvocationStyle::ParenCall
+                                      : ast::CommandInvocationStyle::ShellWords;
+        invocation.span = word.span;
+        invocation.words.push_back(std::move(word));
+        command.invocation = std::move(invocation);
+
+        if (paren_call) {
+            parse_call_arguments(p, *command.invocation, span);
+        }
+        return;
+    }
+
+    command.invocation->span =
+        ast::merge_spans(command.invocation->span, word.span);
+    command.invocation->words.push_back(std::move(word));
+}
+
+void parse_with_prefix(ParserState &p, ast::SimpleCommand &command,
+                       std::optional<SourceSpan> &span) {
+    Token keyword = advance(p);
+    command.explicit_with = true;
+    include_span(span, keyword.span);
+
+    size_t assignment_count = 0;
+    while (!is_command_boundary(p)) {
+        if (std::optional<ast::Assignment> assignment = parse_assignment(p)) {
+            include_span(span, assignment->span);
+            command.assignments.push_back(std::move(*assignment));
+            ++assignment_count;
+            continue;
+        }
+
+        if (!check(p, TokenKind::Word)) {
+            break;
+        }
+
+        ast::Word word = make_word(peek(p));
+        std::optional<ast::Assignment> assignment = assignment_from_word(word);
+        if (!assignment) {
+            break;
+        }
+
+        if (!is_valid_variable_name(assignment->name.text)) {
+            add_error(p, assignment->name.span,
+                      "with: expected valid assignment name");
+            advance(p);
+            continue;
+        }
+
+        advance(p);
+        include_span(span, assignment->span);
+        command.assignments.push_back(std::move(*assignment));
+        ++assignment_count;
+    }
+
+    if (assignment_count == 0) {
+        add_error(p, error_span(p), "with: expected assignment before command");
+    }
+
+    if (is_command_boundary(p) || !check(p, TokenKind::Word)) {
+        add_error(
+            p, is_command_boundary(p) ? previous_span_or_eof(p) : error_span(p),
+            "with: expected command after assignments");
+    }
+}
+
 std::optional<ast::SimpleCommand> parse_simple_command(ParserState &p) {
     ast::SimpleCommand command{};
     std::optional<SourceSpan> span;
+
+    if (check_keyword(p, "with")) {
+        parse_with_prefix(p, command, span);
+    }
 
     while (!is_command_boundary(p)) {
         if (command.invocation &&
@@ -352,29 +461,7 @@ std::optional<ast::SimpleCommand> parse_simple_command(ParserState &p) {
             break;
         }
 
-        ast::Word word = make_word(advance(p));
-        include_span(span, word.span);
-
-        if (!command.invocation) {
-            const bool paren_call = check(p, TokenKind::LeftParen) &&
-                                    word.span.end == peek(p).span.start;
-            ast::CommandInvocation invocation{};
-            invocation.style = paren_call
-                                   ? ast::CommandInvocationStyle::ParenCall
-                                   : ast::CommandInvocationStyle::ShellWords;
-            invocation.span = word.span;
-            invocation.words.push_back(std::move(word));
-            command.invocation = std::move(invocation);
-
-            if (paren_call) {
-                parse_call_arguments(p, *command.invocation, span);
-            }
-            continue;
-        }
-
-        command.invocation->span =
-            ast::merge_spans(command.invocation->span, word.span);
-        command.invocation->words.push_back(std::move(word));
+        parse_command_word(p, command, span);
     }
 
     if (!span) {

@@ -11,20 +11,18 @@ namespace builtins::env {
 
 struct SavedVariable {
     bool existed = false;
+    int scope = -1;
     shell::ShellVariable old_value;
 };
 
 using AssignmentSnapshot = std::unordered_map<std::string, SavedVariable>;
 
-void apply_persistent_assignments(
-    shell::ShellState &state,
-    const std::vector<parser::ast::Assignment> &assignments);
-
 AssignmentSnapshot apply_temporary_assignments(
     shell::ShellState &state,
-    const std::vector<parser::ast::Assignment> &assignments);
+    const std::vector<parser::ast::Assignment> &assignments, int scope);
 
 void restore_temporary_assignments(shell::ShellState &state,
-                                   const AssignmentSnapshot &snapshot);
+                                   const AssignmentSnapshot &snapshot,
+                                   int scope);
 
 } // namespace builtins::env

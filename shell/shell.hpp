@@ -22,6 +22,10 @@ struct ShellFunction {
     parser::ast::Block body;
 };
 
+struct Scope {
+    std::unordered_map<std::string, ShellVariable> variables;
+};
+
 struct ShellState {
     std::vector<std::string> history;
     std::vector<process::ProcessInfo> processes;
@@ -36,8 +40,8 @@ struct ShellState {
     long long last_exec_seconds = 0;
 
     std::unordered_map<std::string, std::string> alias;
-    std::unordered_map<std::string, ShellVariable> variables;
     std::unordered_map<std::string, ShellFunction> functions;
+    std::vector<Scope> scopes = {{}};
 };
 
 struct ExecuteOptions {
